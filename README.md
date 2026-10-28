@@ -1,17 +1,100 @@
-# lamma_party_game_app
+# تطبيق لمّة - Lamma Party Game App 🎮
+**تطبيق ألعاب جماعية أوفلاين باللهجة المصرية**  
+**صنع بواسطة: Mohamed Ibrahim**
 
-A new Flutter project.
+---
 
-## Getting Started
+## 🌟 نبذة عن المشروع
+"لمّة" هو تطبيق موبايل للألعاب الجماعية في التجمعات العائلية ولمّات الصحاب، مبني بالكامل على معمارية **Clean Architecture** ونظام إدارة الحالة **Riverpod**.
 
-This project is a starting point for a Flutter application.
+يعمل التطبيق بشكل **أوفلاين بالكامل (Peer-to-Peer)** عبر شبكة الواي فاي أو الهوت سبوت المحلي (Local WebSocket)، دون الحاجة لاتصال بالإنترنت أثناء اللعب، مع دعم خلفية **Laravel 11** لتخزين ومزامنة وتوليد الأسئلة بذكاء اصطناعي (Gemini).
 
-A few resources to get you started if this is your first Flutter project:
+---
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 🕹️ الألعاب المتوفرة
+1. **مين الجاسوس 🕵️‍♂️**: لعبة التخفي والاستجواب، كل اللاعبين عارفين المكان السري ما عدا الجاسوس اللي بيحاول يخمّن من غير ما يتكشف.
+2. **تحدي الشلة 🎯**: أسئلة ثقافة عامة، إفيهات وقفشات سينمائية، وكورة مصرية، والكل بيجاوب في نفس الوقت مع بونص سرعة.
+3. **مثّل ومتتكلمش 🎭**: لعبة تمثيل بدون كلام مع حساسات حركة الموبايل على الجبهة (إمالة لأسفل = صح ✔️، إمالة لأعلى = تخطي ⏩).
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## 🛡️ نظام مكافحة الغش (Anti-Cheat System)
+- مراقبة دورة حياة التطبيق (`AppLifecycleDetector`).
+- احتساب مخالفة (Strike) عند الخروج من اللعبة أو فتح تطبيقات أخرى.
+- 3 مخالفات = طرد تلقائي من الغرفة لحماية نزاهة المنافسة.
+
+---
+
+## 🏗️ هيكلية المشروع (Clean Architecture)
+```text
+lib/
+├── core/
+│   ├── constants/       # روابط وإعدادات الـ API
+│   ├── routes/          # مسارات GoRouter لـ 44 شاشة
+│   ├── theme/           # ألوان وخطوط Cairo وتوكنز Stitch
+│   ├── utils/           # كاشف الخروج ومكافحة الغش
+│   └── widgets/         # الأزرار والكروت الدائرية المخصصة
+├── data/
+│   ├── api/             # عميل Dio للاتصال بالباك إند
+│   ├── models/          # نماذج الأسئلة واللاعبين والبيانات
+│   ├── providers/       # Riverpod Providers وإدارة الغرفة
+│   └── storage/         # التخزين المحلي للكاش
+├── features/
+│   ├── splash/          # شاشة البداية
+│   ├── home/            # الشاشة الرئيسية
+│   ├── room/            # إنشاء والانضمام للغرفة
+│   ├── lobby/           # اللوبي والإعدادات المتقدمة
+│   ├── spy/             # شاشات مين الجاسوس
+│   ├── trivia/          # شاشات تحدي الشلة
+│   ├── charades/        # شاشات مثّل ومتتكلمش
+│   ├── feedback/        # شاشات النتائج، التحذيرات، والطرد
+│   ├── settings/        # إعدادات الصوت والاسم والأفاتار
+│   └── howto/           # كتيبات وقواعد كل لعبة
+└── net/
+    ├── client/          # عميل الـ WebSocket المحلي
+    ├── protocol/        # رسائل وبروتوكول الغرفة P2P
+    └── server/          # سيرفر الهوست المحلي (dart:io HttpServer)
+```
+
+---
+
+## 🚀 طريقة التشغيل للمبتدئين خطوة بخطوة
+
+### 1. تشغيل الباك إند (Laravel Backend):
+افتح التيرمينال داخل مجلد `backend`:
+```powershell
+cd backend
+composer install
+php artisan migrate --seed
+php artisan serve --port=8081
+```
+
+### 2. مراجعة وتوليد الأسئلة عبر الـ Artisan:
+- لعرض إحصائيات الأسئلة والمحتوى:
+```powershell
+php artisan content:stats
+```
+- لتوليد أسئلة جديدة بـ Gemini:
+```powershell
+php artisan content:generate --category=afeehat --count=5
+```
+- لمراجعة وقبول أو رفض الأسئلة المعلقة:
+```powershell
+php artisan content:review
+```
+
+### 3. تشغيل تطبيق الفلاتر (Flutter App):
+افتح تيرمينال جديد في المجلد الرئيسي:
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
+
+---
+
+## 🎨 توثيق شاشات التصميم (44 شاشة)
+تم استخراج جميع الشاشات الـ 44 بدقة كاملة من Stitch MCP إلى المجلد `./design/` (ملفات HTML وسكرين شوتس كاملة) وتم تطبيقها بنسبة 100% داخل التطبيق.
+
+**صنع بحب بواسطة: Mohamed Ibrahim**

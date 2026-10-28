@@ -7,7 +7,16 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Lamma Party Game App</string>
+	<string>لمّة</string>
+	<key>NSCameraUsageDescription</key>
+	<string>يستخدم التطبيق الكاميرا لمسح رمز QR والانضمام للغرفة</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>يستخدم التطبيق الشبكة المحلية للاتصال بين الأجهزة في الغرفة أثناء اللعب</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_bonjour._tcp</string>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
