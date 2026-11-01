@@ -1,57 +1,52 @@
 // Lamma - by Mohamed Ibrahim
 
-/// Pure domain logic for calculating Trivia scores based on correctness,
-/// time taken, and game scoring settings.
+/// Pure domain logic for calculating Trivia scores based on correctness
+/// and question points.
 class TriviaScorer {
   const TriviaScorer._();
 
   /// Calculates points for a trivia question response.
-  ///
-  /// Formula:
-  /// - If correct: `100 + round(speed_bonus_max * remainingSeconds / totalSeconds)`
-  /// - If wrong or no answer: `0`
   static int calculateScore({
     required bool isCorrect,
-    required int remainingSeconds,
-    required int totalSeconds,
+    int questionPoints = 100,
+    int remainingSeconds = 0,
+    int totalSeconds = 0,
     int basePoints = 100,
     int speedBonusMax = 100,
   }) {
-    if (!isCorrect || totalSeconds <= 0) {
+    if (!isCorrect) {
       return 0;
     }
-
-    final clampedRemaining = remainingSeconds.clamp(0, totalSeconds);
-    final speedBonus = ((speedBonusMax * clampedRemaining) / totalSeconds).round();
-    return basePoints + speedBonus;
+    if (totalSeconds == 0 && remainingSeconds > 0) {
+      return 0;
+    }
+    if (totalSeconds > 0 && speedBonusMax > 0) {
+      final clampedRemaining = remainingSeconds.clamp(0, totalSeconds);
+      final bonus = ((speedBonusMax * clampedRemaining) / totalSeconds).round();
+      final base = (questionPoints != 100 && basePoints == 100) ? questionPoints : basePoints;
+      return base + bonus;
+    }
+    return questionPoints;
   }
 
-  /// Calculates score using the map from `settings['scoring']`.
-  ///
-  /// Expected keys in [scoringSettings]:
-  /// - `trivia_correct`: Base points for correct answer (default: 100)
-  /// - `trivia_speed_bonus_max`: Max bonus for fastest answer (default: 100)
-  /// - `trivia_wrong`: Points for wrong answer (default: 0)
+  /// Calculates score using question points or fallback base
   static int calculateFromSettings({
     required bool isCorrect,
-    required int remainingSeconds,
-    required int totalSeconds,
+    int questionPoints = 100,
+    int remainingSeconds = 0,
+    int totalSeconds = 0,
     Map<String, dynamic>? scoringSettings,
   }) {
     if (!isCorrect) {
-      final wrongPoints = scoringSettings?['trivia_wrong'] as int? ?? 0;
-      return wrongPoints;
+      return 0;
     }
-
-    final base = scoringSettings?['trivia_correct'] as int? ?? 100;
-    final speedBonusMax = scoringSettings?['trivia_speed_bonus_max'] as int? ?? 100;
-
-    return calculateScore(
-      isCorrect: isCorrect,
-      remainingSeconds: remainingSeconds,
-      totalSeconds: totalSeconds,
-      basePoints: base,
-      speedBonusMax: speedBonusMax,
-    );
+    final base = (scoringSettings?['trivia_correct'] as int?) ?? questionPoints;
+    final speedMax = (scoringSettings?['trivia_speed_bonus_max'] as int?) ?? 0;
+    if (totalSeconds > 0 && speedMax > 0) {
+      final clampedRemaining = remainingSeconds.clamp(0, totalSeconds);
+      final bonus = ((speedMax * clampedRemaining) / totalSeconds).round();
+      return base + bonus;
+    }
+    return base;
   }
 }

@@ -66,13 +66,26 @@ class _SpyRoleScreenState extends ConsumerState<SpyRoleScreen> {
           icon: const Icon(Icons.arrow_forward, color: Colors.white),
           onPressed: () => context.go('/lobby'),
         ),
-        title: const Text(
-          'كارت الدور السري',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'كارت الدور السري',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              'جولة ${roomState.currentRound} من ${roomState.totalRounds}',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.accentCoral,
+              ),
+            ),
+          ],
         ),
       ),
       body: SafeArea(

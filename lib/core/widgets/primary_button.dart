@@ -12,6 +12,8 @@ class PrimaryButton extends StatelessWidget {
   final Color textColor;
   final dynamic icon; // Can be IconData or Widget
   final bool isLoading;
+  final EdgeInsetsGeometry? padding;
+  final double? fontSize;
 
   const PrimaryButton({
     super.key,
@@ -23,6 +25,8 @@ class PrimaryButton extends StatelessWidget {
     this.textColor = AppColors.textOnAccent,
     this.icon,
     this.isLoading = false,
+    this.padding,
+    this.fontSize,
   });
 
   @override
@@ -33,7 +37,7 @@ class PrimaryButton extends StatelessWidget {
     Widget? iconWidget;
     if (icon != null) {
       if (icon is IconData) {
-        iconWidget = Icon(icon as IconData, size: 22, color: textColor);
+        iconWidget = Icon(icon as IconData, size: 20, color: textColor);
       } else if (icon is Widget) {
         iconWidget = icon as Widget;
       }
@@ -51,7 +55,7 @@ class PrimaryButton extends StatelessWidget {
           elevation: 0,
           shadowColor: Colors.transparent,
           shape: const StadiumBorder(),
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: padding ?? const EdgeInsets.symmetric(horizontal: 16),
         ),
         child: isLoading
             ? SizedBox(
@@ -70,13 +74,17 @@ class PrimaryButton extends StatelessWidget {
                     iconWidget,
                     const SizedBox(width: 8),
                   ],
-                  Text(
-                    text,
-                    style: TextStyle(
-                      fontFamily: AppTheme.fontFamily,
-                      fontSize: 18.0,
-                      fontWeight: FontWeight.w700,
-                      color: textColor,
+                  Flexible(
+                    child: Text(
+                      text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: AppTheme.fontFamily,
+                        fontSize: fontSize ?? 18.0,
+                        fontWeight: FontWeight.w700,
+                        color: textColor,
+                      ),
                     ),
                   ),
                 ],

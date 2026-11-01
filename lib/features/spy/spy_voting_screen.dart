@@ -38,13 +38,31 @@ class _SpyVotingScreenState extends ConsumerState<SpyVotingScreen> {
           icon: const Icon(Icons.arrow_forward, color: Colors.white),
           onPressed: () => context.pop(),
         ),
-        title: const Text(
-          'مين الجاسوس؟',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'مين الجاسوس؟',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Consumer(
+              builder: (context, ref, _) {
+                final roomState = ref.watch(gameRoomProvider);
+                return Text(
+                  'جولة ${roomState.currentRound} من ${roomState.totalRounds}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.accentCoral,
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
       body: SafeArea(
@@ -133,9 +151,16 @@ class _SpyVotingScreenState extends ConsumerState<SpyVotingScreen> {
                 accentColor: AppTheme.accentCoral,
                 onPressed: _selectedPlayerId != null
                     ? () {
-                        // If selected player is spy, give last chance to guess
-                        // Otherwise go straight to results
-                        context.go('/spy/last-chance');
+                        final roomNotifier = ref.read(gameRoomProvider.notifier);
+                        roomNotifier.setVotedPlayer(_selectedPlayerId!);
+                        final isSpy = ref.read(gameRoomProvider).spyPlayerIds.contains(_selectedPlayerId);
+                        if (isSpy) {
+                          // لو صوتوا على الجاسوس، الجاسوس عنده فرصة أخيرة يخمن الكلمة
+                          context.go('/spy/last-chance');
+                        } else {
+                          // لو صوتوا على مواطن بريء، الجاسوس كسب مباشرة
+                          context.go('/spy/result');
+                        }
                       }
                     : null,
               ),

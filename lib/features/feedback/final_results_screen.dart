@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/secondary_button.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
+import '../charades/controllers/charades_controller.dart';
+import '../trivia/presentation/controllers/trivia_controller.dart';
 
 class FinalResultsScreen extends ConsumerWidget {
   const FinalResultsScreen({super.key});
@@ -13,14 +16,20 @@ class FinalResultsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final roomState = ref.watch(gameRoomProvider);
-    final players = roomState.players.isNotEmpty
-        ? roomState.players
+    final triviaState = ref.watch(triviaGameProvider);
+
+    final rawPlayers = (roomState.selectedGame == GameType.trivia && triviaState.players.isNotEmpty)
+        ? triviaState.players
+        : (roomState.players.isNotEmpty ? roomState.players : const <PlayerModel>[]);
+
+    final players = rawPlayers.isNotEmpty
+        ? rawPlayers
         : [
-            PlayerModel(id: '1', name: 'أحمد', avatar: '🦁', score: 1240),
-            PlayerModel(id: '2', name: 'سارة', avatar: '🦊', score: 980),
-            PlayerModel(id: '3', name: 'كريم', avatar: '🐻', score: 720),
-            PlayerModel(id: '4', name: 'نور', avatar: '🐼', score: 540),
-            PlayerModel(id: '5', name: 'عمر', avatar: '🐯', score: 410),
+            const PlayerModel(id: '1', name: 'أحمد', avatar: '🦁', score: 1240),
+            const PlayerModel(id: '2', name: 'سارة', avatar: '🦊', score: 980),
+            const PlayerModel(id: '3', name: 'كريم', avatar: '🐻', score: 720),
+            const PlayerModel(id: '4', name: 'نور', avatar: '🐼', score: 540),
+            const PlayerModel(id: '5', name: 'عمر', avatar: '🐯', score: 410),
           ];
 
     final sorted = [...players]..sort((a, b) => b.score.compareTo(a.score));
@@ -29,6 +38,11 @@ class FinalResultsScreen extends ConsumerWidget {
     final third = sorted.length > 2 ? sorted[2] : null;
     final rest = sorted.length > 3 ? sorted.sublist(3) : <PlayerModel>[];
 
+    final rank2 = (second != null && first != null && second.score == first.score) ? 1 : 2;
+    final rank3 = (third != null && second != null && third.score == second.score)
+        ? rank2
+        : ((third != null && first != null && third.score == first.score) ? 1 : 3);
+
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
@@ -36,10 +50,10 @@ class FinalResultsScreen extends ConsumerWidget {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.go('/home'),
+          onPressed: () => context.go('/lobby'),
         ),
         title: const Text(
-          'الفايز',
+          'الترتيب النهائي 🏆',
           style: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.bold,
@@ -65,8 +79,8 @@ class FinalResultsScreen extends ConsumerWidget {
                           Expanded(
                             child: _buildPodiumStep(
                               player: second,
-                              rank: 2,
-                              title: 'فضة',
+                              rank: rank2,
+                              title: 'فضة 🥈',
                               height: 110,
                               rankColor: AppTheme.textSecondary,
                             ),
@@ -81,7 +95,7 @@ class FinalResultsScreen extends ConsumerWidget {
                             child: _buildPodiumStep(
                               player: first,
                               rank: 1,
-                              title: 'البطل',
+                              title: 'البطل 🥇',
                               height: 150,
                               rankColor: AppTheme.accentSaffron,
                               isChampion: true,
@@ -96,8 +110,8 @@ class FinalResultsScreen extends ConsumerWidget {
                           Expanded(
                             child: _buildPodiumStep(
                               player: third,
-                              rank: 3,
-                              title: 'برونز',
+                              rank: rank3,
+                              title: 'برونز 🥉',
                               height: 90,
                               rankColor: const Color(0xFFD3C5AD),
                             ),
@@ -109,56 +123,97 @@ class FinalResultsScreen extends ConsumerWidget {
                     const SizedBox(height: 24),
 
                     // Rest of players
-                    ...rest.map((p) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                            decoration: BoxDecoration(
-                              color: AppTheme.cardBg,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    Text(p.avatar, style: const TextStyle(fontSize: 22)),
-                                    const SizedBox(width: 10),
-                                    Text(
-                                      p.name,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                Text(
-                                  '${p.score} نقطة',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ],
-                            ),
+                    ...rest.map(
+                      (p) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
                           ),
-                        )),
+                          decoration: BoxDecoration(
+                            color: AppTheme.cardBg,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    p.avatar,
+                                    style: const TextStyle(fontSize: 22),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    p.name,
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                '${p.score} نقطة',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
 
+              // زراير النهاية: العب تاني ورجوع للقائمة
               PrimaryButton(
-                title: 'الرئيسية',
-                icon: Icons.home,
+                title: 'العب تاني 🔄',
+                icon: Icons.replay,
                 accentColor: AppTheme.accentSaffron,
-                onPressed: () {
-                  context.go('/home');
+                onPressed: () async {
+                  if (roomState.selectedGame == GameType.charades) {
+                    await ref.read(charadesGameProvider.notifier).restartGame();
+                    if (context.mounted) {
+                      context.go('/charades/handoff');
+                    }
+                  } else if (roomState.selectedGame == GameType.trivia) {
+                    await ref.read(triviaGameProvider.notifier).restartGame();
+                    if (context.mounted) {
+                      context.go('/trivia/question');
+                    }
+                  } else {
+                    final settings = ref.read(spySettingsProvider);
+                    final bootstrap = ref.read(bootstrapProvider);
+                    await ref
+                        .read(gameRoomProvider.notifier)
+                        .startSpyGameRound(
+                          packSlug: settings.wordPack,
+                          bootstrapData: bootstrap.data,
+                          totalRounds: settings.rounds,
+                          isNewGame: true,
+                        );
+                    if (context.mounted) {
+                      context.go('/spy/role');
+                    }
+                  }
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
+              SecondaryButton(
+                title: 'رجوع للقائمة 🚪',
+                icon: Icons.exit_to_app,
+                onPressed: () {
+                  context.go('/lobby');
+                },
+              ),
+              const SizedBox(height: 8),
               const Center(
                 child: Text(
                   'Mohamed Ibrahim',
@@ -199,7 +254,9 @@ class FinalResultsScreen extends ConsumerWidget {
           children: [
             CircleAvatar(
               radius: isChampion ? 32 : 26,
-              backgroundColor: isChampion ? AppTheme.accentSaffron : AppTheme.cardBg,
+              backgroundColor: isChampion
+                  ? AppTheme.accentSaffron
+                  : AppTheme.cardBg,
               child: Text(
                 player.avatar,
                 style: TextStyle(fontSize: isChampion ? 32 : 26),

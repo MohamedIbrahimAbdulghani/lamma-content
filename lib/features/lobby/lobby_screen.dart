@@ -1,32 +1,324 @@
 // Lamma - by Mohamed Ibrahim
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/routes/app_routes.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
+import '../charades/controllers/charades_controller.dart';
 import '../trivia/presentation/controllers/trivia_controller.dart';
 
-class LobbyScreen extends ConsumerWidget {
+class LobbyScreen extends ConsumerStatefulWidget {
   const LobbyScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LobbyScreen> createState() => _LobbyScreenState();
+}
+
+class _LobbyScreenState extends ConsumerState<LobbyScreen> {
+  bool _isStarting = false;
+
+  Future<void> _handleStartGame(GameType currentGame) async {
+    if (_isStarting) return;
+    setState(() => _isStarting = true);
+
+    final roomNotifier = ref.read(gameRoomProvider.notifier);
+    final roomServer = roomNotifier.server;
+    final contentService = ref.read(gameContentServiceProvider);
+
+    try {
+      // 1. مهلة لانتظار بصمات اللاعبين المنضمين (حوالي 2 ثانية كحد أقصى)
+      if (roomServer != null) {
+        await Future.any([
+          Future.delayed(const Duration(milliseconds: 300)),
+          Future.delayed(const Duration(seconds: 2)),
+        ]);
+      }
+
+      // 2. تحديث حالة الغرفة لبدء اللعبة
+      roomNotifier.startGame();
+
+      // 3. تحضير المحتوى وبدء اللعبة مع مهلة قصوى 6 ثوانٍ
+      switch (currentGame) {
+        case GameType.spy:
+          final spySettings = ref.read(spySettingsProvider);
+          final bootstrap = ref.read(bootstrapProvider);
+
+          await roomNotifier.startSpyGameRound(
+            packSlug: spySettings.wordPack,
+            bootstrapData: bootstrap.data,
+            totalRounds: spySettings.rounds,
+            isNewGame: true,
+          ).timeout(
+            const Duration(seconds: 6),
+            onTimeout: () {
+              debugPrint('Spy game round start timed out after 6s. Proceeding with fallback.');
+            },
+          );
+
+          if (contentService.hasRecycledSpy && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('تم استهلاك بنك الكلمات المتاح. اتصل بالإنترنت لمحتوى جديد 🌐'),
+                duration: Duration(seconds: 3),
+              ),
+            );
+            contentService.hasRecycledSpy = false;
+          }
+
+          if (mounted) {
+            context.go(AppRoutes.spyRole);
+          }
+          break;
+
+        case GameType.trivia:
+          final triviaSettings = ref.read(triviaSettingsProvider);
+          final bootstrap = ref.read(bootstrapProvider);
+
+          final questions = await contentService.getTriviaQuestions(
+            count: triviaSettings.questionsCount,
+            categories: triviaSettings.categories,
+            difficulty: triviaSettings.difficulty,
+            bootstrapData: bootstrap.data,
+            externalSeenPromptHashes: roomServer?.getAllSeenTriviaPromptHashes(),
+            externalSeenAnswerHashes: roomServer?.getAllSeenTriviaAnswerHashes(),
+          ).timeout(
+            const Duration(seconds: 6),
+            onTimeout: () {
+              debugPrint('Trivia content preparation timed out after 6s. Using local fallback.');
+              return contentService.getFallbackTriviaQuestions(
+                count: triviaSettings.questionsCount,
+                categories: triviaSettings.categories,
+                difficulty: triviaSettings.difficulty,
+              );
+            },
+          );
+
+          if (contentService.hasRecycledTrivia && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('تم استهلاك بنك الأسئلة المتاح. اتصل بالإنترنت لمحتوى جديد 🌐'),
+                duration: Duration(seconds: 3),
+              ),
+            );
+            contentService.hasRecycledTrivia = false;
+          }
+
+          await ref.read(triviaGameProvider.notifier).restartGame(
+                newQuestions: questions,
+                questionCount: triviaSettings.questionsCount,
+                totalSeconds: triviaSettings.timePerQuestion,
+                categories: triviaSettings.categories,
+                difficulty: triviaSettings.difficulty,
+              );
+
+          roomNotifier.startTriviaGameRound(
+            questions: questions,
+            timePerQuestion: triviaSettings.timePerQuestion,
+          );
+
+          if (mounted) {
+            context.go(AppRoutes.triviaPlay);
+          }
+          break;
+
+        case GameType.charades:
+          final charadesSettings = ref.read(charadesSettingsProvider);
+
+          await ref.read(charadesGameProvider.notifier).initGame().timeout(
+            const Duration(seconds: 6),
+            onTimeout: () {
+              debugPrint('Charades content preparation timed out after 6s. Proceeding with available stock.');
+            },
+          );
+
+          if (contentService.hasRecycledCharades && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('تم استهلاك بنك الكلمات المتاح. اتصل بالإنترنت لمحتوى جديد 🌐'),
+                duration: Duration(seconds: 3),
+              ),
+            );
+            contentService.hasRecycledCharades = false;
+          }
+
+          roomNotifier.startCharadesGameRound(
+            roundSeconds: charadesSettings.roundSeconds,
+          );
+
+          if (mounted) {
+            context.go(AppRoutes.charadesHandoff);
+          }
+          break;
+      }
+    } catch (e, stack) {
+      debugPrint('Error starting game: $e\n$stack');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذر بدء اللعبة: $e'),
+            backgroundColor: AppTheme.accentCoral,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isStarting = false);
+      }
+      roomNotifier.resetStartingGuard();
+    }
+  }
+
+  void _showChangeGameSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.cardBg,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Center(
+                  child: Text(
+                    'اختر نوع اللعبة',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ...GameType.values.map((game) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: InkWell(
+                      onTap: () {
+                        ref.read(selectedGame.notifier).state = game;
+                        ref.read(gameRoomProvider.notifier).setSelectedGame(game);
+                        Navigator.of(ctx).pop();
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.bg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: game.accentColor.withValues(alpha: 0.4),
+                            width: 1.5,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Text(game.emoji, style: const TextStyle(fontSize: 26)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    game.title,
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    game.shortDescription,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final roomState = ref.watch(gameRoomProvider);
     final isHost = roomState.isHost;
     final players = roomState.players.isNotEmpty
         ? roomState.players
         : [
-            PlayerModel(id: '1', name: 'أحمد', avatar: '🦁', isHost: true),
-            PlayerModel(id: '2', name: 'سارة', avatar: '🦊'),
-            PlayerModel(id: '3', name: 'كريم', avatar: '🐻'),
-            PlayerModel(id: '4', name: 'نور', avatar: '🐼'),
-            PlayerModel(id: '5', name: 'عمر', avatar: '🐯'),
-            PlayerModel(id: '6', name: 'ياسمين', avatar: '🐨'),
+            const PlayerModel(id: '1', name: 'أحمد', avatar: '🦁', isHost: true),
+            const PlayerModel(id: '2', name: 'سارة', avatar: '🦊'),
+            const PlayerModel(id: '3', name: 'كريم', avatar: '🐻'),
+            const PlayerModel(id: '4', name: 'نور', avatar: '🐼'),
+            const PlayerModel(id: '5', name: 'عمر', avatar: '🐯'),
+            const PlayerModel(id: '6', name: 'ياسمين', avatar: '🐨'),
           ];
+
+    final currentGame = roomState.selectedGame;
+
+    // استماع لانتقال اللعبة للعميل المنضم عند بدء أي لعبة من المضيف
+    ref.listen<ActiveRoomState>(gameRoomProvider, (previous, next) {
+      if (!isHost && next.hostLeft) {
+        if (context.mounted) {
+          context.go(AppRoutes.hostLeft);
+        }
+        return;
+      }
+      if (!isHost && next.isKicked) {
+        if (context.mounted) {
+          context.go(AppRoutes.kicked);
+        }
+        return;
+      }
+      if (!isHost &&
+          next.currentPhase == 'role_hidden' &&
+          next.gameMode == 'spy') {
+        if (context.mounted) {
+          context.go(AppRoutes.spyRole);
+        }
+      }
+      if (!isHost &&
+          next.currentPhase == 'trivia_question' &&
+          next.triviaQuestions.isNotEmpty) {
+        ref.read(triviaGameProvider.notifier).restartGame(
+              newQuestions: next.triviaQuestions,
+              questionCount: next.totalQuestions,
+              totalSeconds: next.timerSeconds > 0 ? next.timerSeconds : 15,
+            );
+        if (context.mounted) {
+          context.go(AppRoutes.triviaPlay);
+        }
+      }
+      if (!isHost &&
+          (next.currentPhase == 'charades_play' ||
+              (next.gameMode == 'charades' && next.currentPhase == 'charades_play'))) {
+        if (context.mounted) {
+          context.go(AppRoutes.charadesSpectator);
+        }
+      }
+    });
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -37,7 +329,7 @@ class LobbyScreen extends ConsumerWidget {
           icon: const Icon(Icons.arrow_forward, color: Colors.white),
           onPressed: () {
             ref.read(gameRoomProvider.notifier).leaveRoom();
-            context.go('/home');
+            context.go(AppRoutes.home);
           },
         ),
         title: const Text(
@@ -193,13 +485,13 @@ class LobbyScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 24),
 
-                    // Game Selection Section
+                    // Selected Game Section
                     const Align(
                       alignment: Alignment.centerRight,
                       child: Text(
-                        'اختر نوع اللعبة',
+                        'اللعبة المختارة',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
                           color: Colors.white,
                         ),
@@ -207,43 +499,11 @@ class LobbyScreen extends ConsumerWidget {
                     ),
                     const SizedBox(height: 12),
 
-                    // Pills
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildGamePill(
-                          title: 'مين الجاسوس',
-                          type: GameType.spy,
-                          selectedType: roomState.selectedGame,
-                          isHost: isHost,
-                          onTap: () {
-                            ref.read(selectedGame.notifier).state = GameType.spy;
-                            ref.read(gameRoomProvider.notifier).setSelectedGame(GameType.spy);
-                          },
-                        ),
-                        _buildGamePill(
-                          title: 'تحدي الشلة',
-                          type: GameType.trivia,
-                          selectedType: roomState.selectedGame,
-                          isHost: isHost,
-                          onTap: () {
-                            ref.read(selectedGame.notifier).state = GameType.trivia;
-                            ref.read(gameRoomProvider.notifier).setSelectedGame(GameType.trivia);
-                          },
-                        ),
-                        _buildGamePill(
-                          title: 'مثّل ومتتكلمش',
-                          type: GameType.charades,
-                          selectedType: roomState.selectedGame,
-                          isHost: isHost,
-                          onTap: () {
-                            ref.read(selectedGame.notifier).state = GameType.charades;
-                            ref.read(gameRoomProvider.notifier).setSelectedGame(GameType.charades);
-                          },
-                        ),
-                      ],
+                    _buildSelectedGameCard(
+                      game: currentGame,
+                      isHost: isHost,
                     ),
+                    const SizedBox(height: 16),
                   ],
                 ),
               ),
@@ -255,15 +515,15 @@ class LobbyScreen extends ConsumerWidget {
                   title: 'إعدادات اللعبة',
                   icon: Icons.tune,
                   onPressed: () {
-                    switch (roomState.selectedGame) {
+                    switch (currentGame) {
                       case GameType.spy:
-                        context.push('/host-settings/spy');
+                        context.push(AppRoutes.hostSettingsSpy);
                         break;
                       case GameType.trivia:
-                        context.push('/host-settings/trivia');
+                        context.push(AppRoutes.hostSettingsTrivia);
                         break;
                       case GameType.charades:
-                        context.push('/host-settings/charades');
+                        context.push(AppRoutes.hostSettingsCharades);
                         break;
                     }
                   },
@@ -272,22 +532,9 @@ class LobbyScreen extends ConsumerWidget {
                 PrimaryButton(
                   title: 'ابدأ اللعبة',
                   icon: Icons.play_arrow,
-                  accentColor: _accentColorForGame(roomState.selectedGame),
-                  onPressed: () {
-                    ref.read(gameRoomProvider.notifier).startGame();
-                    switch (roomState.selectedGame) {
-                      case GameType.spy:
-                        context.go('/spy/role');
-                        break;
-                      case GameType.trivia:
-                        ref.read(triviaGameProvider.notifier).restartGame();
-                        context.go('/trivia/question');
-                        break;
-                      case GameType.charades:
-                        context.go('/charades/handoff');
-                        break;
-                    }
-                  },
+                  accentColor: currentGame.accentColor,
+                  isLoading: _isStarting,
+                  onPressed: _isStarting ? null : () => _handleStartGame(currentGame),
                 ),
               ] else ...[
                 Container(
@@ -328,48 +575,68 @@ class LobbyScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildGamePill({
-    required String title,
-    required GameType type,
-    required GameType selectedType,
+  // كارت اللعبة المختارة مع زر "تغيير" للمضيف
+  Widget _buildSelectedGameCard({
+    required GameType game,
     required bool isHost,
-    required VoidCallback onTap,
   }) {
-    final isSelected = type == selectedType;
-    final color = _accentColorForGame(type);
+    final accent = game.accentColor;
 
-    return InkWell(
-      onTap: isHost ? onTap : null,
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        decoration: BoxDecoration(
-          color: isSelected ? color : AppTheme.cardBg,
-          borderRadius: BorderRadius.circular(22),
-          border: isSelected ? null : Border.all(color: const Color(0xFF4F4534)),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          title,
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
-            color: isSelected ? const Color(0xFF101428) : Colors.white,
-          ),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      decoration: BoxDecoration(
+        color: AppTheme.cardBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: accent.withValues(alpha: 0.35),
+          width: 1.5,
         ),
       ),
-    );
-  }
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              game.emoji,
+              style: const TextStyle(fontSize: 24),
+            ),
+          ),
+          const SizedBox(width: 14),
 
-  Color _accentColorForGame(GameType game) {
-    switch (game) {
-      case GameType.spy:
-        return AppTheme.accentCoral;
-      case GameType.trivia:
-        return AppTheme.accentSaffron;
-      case GameType.charades:
-        return AppTheme.accentMint;
-    }
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  game.title,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  game.shortDescription,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

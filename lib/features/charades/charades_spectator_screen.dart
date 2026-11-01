@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
+import 'controllers/charades_controller.dart';
 
 class CharadesSpectatorScreen extends ConsumerStatefulWidget {
   const CharadesSpectatorScreen({super.key});
@@ -15,11 +16,14 @@ class CharadesSpectatorScreen extends ConsumerStatefulWidget {
 
 class _CharadesSpectatorScreenState extends ConsumerState<CharadesSpectatorScreen> {
   Timer? _timer;
-  int _secondsLeft = 42;
+  int _secondsLeft = 60;
 
   @override
   void initState() {
     super.initState();
+    final roomState = ref.read(gameRoomProvider);
+    _secondsLeft = roomState.timerSeconds > 0 ? roomState.timerSeconds : 60;
+
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_secondsLeft > 0) {
         setState(() {
@@ -52,6 +56,7 @@ class _CharadesSpectatorScreenState extends ConsumerState<CharadesSpectatorScree
 
     final minutes = (_secondsLeft ~/ 60).toString();
     final seconds = (_secondsLeft % 60).toString().padLeft(2, '0');
+    final charadesState = ref.watch(charadesGameProvider);
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -69,7 +74,28 @@ class _CharadesSpectatorScreenState extends ConsumerState<CharadesSpectatorScree
                   color: Colors.white,
                 ),
               ),
-              const SizedBox(height: 20),
+              if (charadesState.isWordsLimitEnabled) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cardBg,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppTheme.accentMint.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Text(
+                    'كلمة ${charadesState.currentWordNumberInTurn} من ${charadesState.wordsPerTurn}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.accentMint,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
 
               // Timer Container
               Container(

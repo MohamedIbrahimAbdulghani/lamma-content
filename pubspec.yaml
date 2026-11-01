@@ -24,6 +24,8 @@ dependencies:
   mobile_scanner: ^6.0.4
   wakelock_plus: ^1.2.11
   sensors_plus: ^6.1.1
+  flutter_dotenv: ^6.0.1
+  crypto: ^3.0.8
 
 dev_dependencies:
   flutter_test:
@@ -35,6 +37,7 @@ flutter:
 
   assets:
     - assets/fonts/
+    - .env
 
   fonts:
     - family: Cairo

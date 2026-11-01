@@ -4,21 +4,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import 'controllers/charades_controller.dart';
 
 class CharadesRoundSummaryScreen extends ConsumerWidget {
   const CharadesRoundSummaryScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final words = [
-      {'word': 'الفرح', 'correct': true},
-      {'word': 'طيارة', 'correct': true},
-      {'word': 'كورة', 'correct': false},
-      {'word': 'بحر', 'correct': true},
-      {'word': 'مدرسة', 'correct': true},
-    ];
+    final charadesState = ref.watch(charadesGameProvider);
+    final history = charadesState.roundHistory;
+    final correctCount = charadesState.correctCountInRound;
+    final passedCount = charadesState.passedCountInRound;
+    final attemptedCount = charadesState.wordsAttemptedInRound;
+    final currentPlayerName = charadesState.currentPlayer?.name ?? 'اللاعب';
 
-    final correctCount = words.where((w) => w['correct'] == true).length;
+    // بنشوف مين اللاعب اللي بعده أو هل دي آخر جولة
+    final isLastPlayer = charadesState.currentPlayerIndex >= charadesState.players.length - 1;
+    final isLastRound = charadesState.currentRound >= charadesState.totalRounds;
+    final willCompleteGame = isLastPlayer && isLastRound;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -28,79 +31,142 @@ class CharadesRoundSummaryScreen extends ConsumerWidget {
           child: Column(
             children: [
               const SizedBox(height: 12),
-              const Text(
-                'خلص الوقت',
-                style: TextStyle(
-                  fontSize: 28,
+              Text(
+                'خلص دور $currentPlayerName!',
+                style: const TextStyle(
+                  fontSize: 26,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                '$correctCount كلمات صح',
+                '$correctCount كلمات صح 🎉',
                 style: const TextStyle(
-                  fontSize: 36,
+                  fontSize: 30,
                   fontWeight: FontWeight.bold,
                   color: AppTheme.accentMint,
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
 
+              // بطاقات إحصائيات الدور (معروضة، عرفوها، تخطي)
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                decoration: BoxDecoration(
+                  color: AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildStatPill(
+                      label: 'المعروضة',
+                      value: charadesState.isWordsLimitEnabled
+                          ? '$attemptedCount من ${charadesState.wordsPerTurn}'
+                          : '$attemptedCount',
+                      color: Colors.white,
+                    ),
+                    Container(width: 1, height: 32, color: Colors.white12),
+                    _buildStatPill(
+                      label: 'عرفوها',
+                      value: '$correctCount',
+                      color: AppTheme.accentMint,
+                    ),
+                    Container(width: 1, height: 32, color: Colors.white12),
+                    _buildStatPill(
+                      label: 'تخطي',
+                      value: '$passedCount',
+                      color: AppTheme.accentCoral,
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // قائمة الكلمات اللي اتلعبت في الدور ده
               Expanded(
-                child: ListView.separated(
-                  itemCount: words.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 12),
-                  itemBuilder: (context, index) {
-                    final item = words[index];
-                    final isCorrect = item['correct'] as bool;
-                    return Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                      decoration: BoxDecoration(
-                        color: AppTheme.cardBg,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            item['word'] as String,
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
+                child: history.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'الوقت خلص بدون تخمين أي كلمة',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: AppTheme.textSecondary,
                           ),
-                          isCorrect
-                              ? const Text(
-                                  '✔',
-                                  style: TextStyle(
-                                    fontSize: 20,
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: history.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final item = history[index];
+                          final isCorrect = item['correct'] as bool? ?? false;
+                          final word = item['word'] as String? ?? '';
+
+                          return Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                            decoration: BoxDecoration(
+                              color: AppTheme.cardBg,
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: isCorrect
+                                    ? AppTheme.accentMint.withValues(alpha: 0.3)
+                                    : AppTheme.accentCoral.withValues(alpha: 0.3),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  word,
+                                  style: const TextStyle(
+                                    fontSize: 18,
                                     fontWeight: FontWeight.bold,
-                                    color: AppTheme.accentMint,
-                                  ),
-                                )
-                              : const Text(
-                                  'تخطّي',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: AppTheme.accentCoral,
+                                    color: Colors.white,
                                   ),
                                 ),
-                        ],
+                                isCorrect
+                                    ? const Text(
+                                        '✔',
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppTheme.accentMint,
+                                        ),
+                                      )
+                                    : const Text(
+                                        'تخطّي',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                          color: AppTheme.accentCoral,
+                                        ),
+                                      ),
+                              ],
+                            ),
+                          );
+                        },
                       ),
-                    );
-                  },
-                ),
               ),
               const SizedBox(height: 12),
 
               PrimaryButton(
-                title: 'الدور اللي بعده',
-                accentColor: AppTheme.accentMint,
+                title: willCompleteGame ? 'النتائج النهائية (مين كسب) 🏆' : 'الدور اللي بعده',
+                accentColor: willCompleteGame ? AppTheme.accentSaffron : AppTheme.accentMint,
+                icon: willCompleteGame ? Icons.emoji_events : Icons.arrow_forward,
                 onPressed: () {
-                  context.go('/charades/handoff');
+                  final isDone = ref.read(charadesGameProvider.notifier).advanceToNextTurn();
+                  if (isDone) {
+                    context.go('/feedback/final-results');
+                  } else {
+                    context.go('/charades/handoff');
+                  }
                 },
               ),
               const SizedBox(height: 8),
@@ -108,6 +174,34 @@ class CharadesRoundSummaryScreen extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildStatPill({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+      ],
     );
   }
 }

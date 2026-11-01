@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/secondary_button.dart';
 import '../../core/widgets/stepper_row.dart';
 import '../../data/providers/game_providers.dart';
+import 'ai_generation_sheet.dart';
 
 class HostSettingsSpyScreen extends ConsumerWidget {
   const HostSettingsSpyScreen({super.key});
@@ -169,6 +171,16 @@ class HostSettingsSpyScreen extends ConsumerWidget {
                           onTap: () => notifier.update(wordPack: 'mixed'),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 24),
+
+                    // توليد كلمات الجاسوس بالذكاء الاصطناعي
+                    SecondaryButton(
+                      title: 'توليد كلمات وأماكن جديدة بالـ AI',
+                      icon: Icons.auto_awesome,
+                      borderColor: AppTheme.accentCoral,
+                      textColor: AppTheme.accentCoral,
+                      onPressed: () => showAiGenerationSheet(context, gameType: 'spy'),
                     ),
                     const SizedBox(height: 32),
                   ],

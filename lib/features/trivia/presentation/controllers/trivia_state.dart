@@ -4,6 +4,7 @@ import 'package:lamma_party_game_app/data/models/player_model.dart';
 import 'package:lamma_party_game_app/data/models/question_model.dart';
 
 enum TriviaPhase {
+  questionSelection,
   question,
   reveal,
   leaderboard,
@@ -29,6 +30,7 @@ class TriviaGameState {
   final List<PlayerModel> players;
   final String myPlayerId;
   final int leaderboardSecondsLeft;
+  final List<int> playedQuestionIndices;
 
   const TriviaGameState({
     this.questions = const [],
@@ -43,6 +45,7 @@ class TriviaGameState {
     this.players = const [],
     this.myPlayerId = '1',
     this.leaderboardSecondsLeft = 3,
+    this.playedQuestionIndices = const [],
   });
 
   QuestionModel? get currentQuestion =>
@@ -52,7 +55,19 @@ class TriviaGameState {
 
   int get totalQuestions => questions.length;
 
-  bool get isLastQuestion => currentQuestionIndex >= questions.length - 1;
+  bool get isLastQuestion =>
+      currentQuestionIndex >= totalQuestions - 1 ||
+      (totalQuestions > 0 && playedQuestionIndices.length >= totalQuestions);
+
+  List<int> get remainingQuestionIndices {
+    final list = <int>[];
+    for (var i = 0; i < questions.length; i++) {
+      if (!playedQuestionIndices.contains(i)) {
+        list.add(i);
+      }
+    }
+    return list;
+  }
 
   List<PlayerModel> get sortedPlayers =>
       [...players]..sort((a, b) => b.score.compareTo(a.score));
@@ -64,12 +79,14 @@ class TriviaGameState {
     int? totalSeconds,
     TriviaPhase? phase,
     int? selectedOptionIndex,
+    bool clearSelectedOption = false,
     bool? isAnswerLocked,
     TriviaAnswerResult? answerResult,
     int? lastEarnedPoints,
     List<PlayerModel>? players,
     String? myPlayerId,
     int? leaderboardSecondsLeft,
+    List<int>? playedQuestionIndices,
   }) {
     return TriviaGameState(
       questions: questions ?? this.questions,
@@ -77,13 +94,18 @@ class TriviaGameState {
       secondsLeft: secondsLeft ?? this.secondsLeft,
       totalSeconds: totalSeconds ?? this.totalSeconds,
       phase: phase ?? this.phase,
-      selectedOptionIndex: selectedOptionIndex ?? this.selectedOptionIndex,
+      selectedOptionIndex: clearSelectedOption
+          ? null
+          : (selectedOptionIndex ?? this.selectedOptionIndex),
       isAnswerLocked: isAnswerLocked ?? this.isAnswerLocked,
       answerResult: answerResult ?? this.answerResult,
       lastEarnedPoints: lastEarnedPoints ?? this.lastEarnedPoints,
       players: players ?? this.players,
       myPlayerId: myPlayerId ?? this.myPlayerId,
-      leaderboardSecondsLeft: leaderboardSecondsLeft ?? this.leaderboardSecondsLeft,
+      leaderboardSecondsLeft:
+          leaderboardSecondsLeft ?? this.leaderboardSecondsLeft,
+      playedQuestionIndices:
+          playedQuestionIndices ?? this.playedQuestionIndices,
     );
   }
 }

@@ -4,16 +4,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
-import '../../data/providers/game_providers.dart';
+import 'controllers/charades_controller.dart';
 
 class CharadesHandoffScreen extends ConsumerWidget {
   const CharadesHandoffScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final roomState = ref.watch(gameRoomProvider);
-    final activePlayer = roomState.players.isNotEmpty ? roomState.players.first.name : 'أحمد';
-    final activeAvatar = roomState.players.isNotEmpty ? roomState.players.first.avatar : '🦁';
+    final charadesState = ref.watch(charadesGameProvider);
+    final activePlayer = charadesState.currentPlayer?.name ?? 'أحمد';
+    final activeAvatar = charadesState.currentPlayer?.avatar ?? '🦁';
+    final roundNumber = charadesState.currentRound;
+    final totalRounds = charadesState.totalRounds;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -23,7 +25,23 @@ class CharadesHandoffScreen extends ConsumerWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const SizedBox(height: 20),
+              // رقم الجولة
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.cardBg,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Text(
+                  'الجولة $roundNumber من $totalRounds',
+                  style: const TextStyle(
+                    color: AppTheme.accentMint,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+
               Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -62,6 +80,7 @@ class CharadesHandoffScreen extends ConsumerWidget {
                   ],
                 ),
               ),
+
               PrimaryButton(
                 title: 'أنا جاهز',
                 icon: Icons.play_arrow,

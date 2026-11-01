@@ -62,13 +62,31 @@ class _SpyDiscussionScreenState extends ConsumerState<SpyDiscussionScreen> {
           icon: const Icon(Icons.arrow_forward, color: Colors.white),
           onPressed: () => context.go('/lobby'),
         ),
-        title: const Text(
-          'وقت النقاش',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'وقت النقاش',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Consumer(
+              builder: (context, ref, _) {
+                final roomState = ref.watch(gameRoomProvider);
+                return Text(
+                  'جولة ${roomState.currentRound} من ${roomState.totalRounds}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.accentCoral,
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
       body: SafeArea(

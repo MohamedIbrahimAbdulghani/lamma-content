@@ -12,6 +12,7 @@ class QuestionModel {
   final String difficulty;
   final String? explanationAr;
   final String source;
+  final int points;
 
   const QuestionModel({
     required this.id,
@@ -25,6 +26,7 @@ class QuestionModel {
     required this.difficulty,
     this.explanationAr,
     required this.source,
+    this.points = 100,
   });
 
   factory QuestionModel.fromJson(Map<String, dynamic> json) {
@@ -40,6 +42,7 @@ class QuestionModel {
       difficulty: json['difficulty'] as String? ?? 'medium',
       explanationAr: json['explanation_ar'] as String?,
       source: json['source'] as String? ?? 'seed',
+      points: json['points'] as int? ?? 100,
     );
   }
 
@@ -55,5 +58,6 @@ class QuestionModel {
     'difficulty': difficulty,
     'explanation_ar': explanationAr,
     'source': source,
+    'points': points,
   };
 }

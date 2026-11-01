@@ -10,6 +10,8 @@ class SecondaryButton extends StatelessWidget {
   final Color borderColor;
   final Color textColor;
   final dynamic icon; // Can be IconData or Widget
+  final EdgeInsetsGeometry? padding;
+  final double? fontSize;
 
   const SecondaryButton({
     super.key,
@@ -19,6 +21,8 @@ class SecondaryButton extends StatelessWidget {
     this.borderColor = AppColors.textSecondary,
     this.textColor = AppColors.textPrimary,
     this.icon,
+    this.padding,
+    this.fontSize,
   });
 
   @override
@@ -28,7 +32,7 @@ class SecondaryButton extends StatelessWidget {
     Widget? iconWidget;
     if (icon != null) {
       if (icon is IconData) {
-        iconWidget = Icon(icon as IconData, size: 22, color: textColor);
+        iconWidget = Icon(icon as IconData, size: 20, color: textColor);
       } else if (icon is Widget) {
         iconWidget = icon as Widget;
       }
@@ -43,7 +47,7 @@ class SecondaryButton extends StatelessWidget {
           foregroundColor: textColor,
           side: BorderSide(color: borderColor, width: 2),
           shape: const StadiumBorder(),
-          padding: const EdgeInsets.symmetric(horizontal: 24),
+          padding: padding ?? const EdgeInsets.symmetric(horizontal: 16),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -53,13 +57,17 @@ class SecondaryButton extends StatelessWidget {
               iconWidget,
               const SizedBox(width: 8),
             ],
-            Text(
-              text,
-              style: TextStyle(
-                fontFamily: AppTheme.fontFamily,
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: textColor,
+            Flexible(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontFamily: AppTheme.fontFamily,
+                  fontSize: fontSize ?? 18,
+                  fontWeight: FontWeight.w700,
+                  color: textColor,
+                ),
               ),
             ),
           ],

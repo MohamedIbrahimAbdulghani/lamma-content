@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/primary_button.dart';
 import 'presentation/controllers/trivia_controller.dart';
 import 'presentation/controllers/trivia_state.dart';
 
@@ -24,6 +25,11 @@ class TriviaPlayScreen extends ConsumerWidget {
       }
     });
 
+    // 1. شاشة اختيار السؤال / التحدي
+    if (triviaState.phase == TriviaPhase.questionSelection) {
+      return _buildQuestionSelectionView(context, triviaState, notifier);
+    }
+
     final currentQ = triviaState.currentQuestion;
     if (currentQ == null) {
       return Scaffold(
@@ -35,7 +41,7 @@ class TriviaPlayScreen extends ConsumerWidget {
     }
 
     final totalQ = triviaState.totalQuestions;
-    final currentNumber = triviaState.currentQuestionIndex + 1;
+    final displayNum = triviaState.currentQuestionIndex + 1;
     final isReveal = triviaState.phase == TriviaPhase.reveal;
     final isCorrect = triviaState.answerResult == TriviaAnswerResult.correct;
     final isWrong = triviaState.answerResult == TriviaAnswerResult.wrong;
@@ -59,7 +65,7 @@ class TriviaPlayScreen extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      'سؤال $currentNumber من $totalQ',
+                      'سؤال $displayNum من $totalQ',
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
@@ -96,7 +102,7 @@ class TriviaPlayScreen extends ConsumerWidget {
               ),
               const SizedBox(height: 16),
 
-              // Reveal Banner (Screen 18 / 19)
+              // Reveal Banner
               if (isReveal && isCorrect)
                 _buildCorrectBanner(points: triviaState.lastEarnedPoints)
               else if (isReveal && isWrong)
@@ -116,7 +122,7 @@ class TriviaPlayScreen extends ConsumerWidget {
                 child: Text(
                   currentQ.promptAr,
                   style: const TextStyle(
-                    fontSize: 24,
+                    fontSize: 22,
                     fontWeight: FontWeight.bold,
                     color: Colors.white,
                     height: 1.35,
@@ -124,14 +130,13 @@ class TriviaPlayScreen extends ConsumerWidget {
                   textAlign: TextAlign.right,
                 ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
 
               // Options List
               Expanded(
                 child: ListView.separated(
-                  physics: const NeverScrollableScrollPhysics(),
                   itemCount: currentQ.options.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 14),
+                  separatorBuilder: (context, index) => const SizedBox(height: 12),
                   itemBuilder: (context, index) {
                     final optionText = currentQ.options[index];
                     return _buildOptionCard(
@@ -153,7 +158,190 @@ class TriviaPlayScreen extends ConsumerWidget {
     );
   }
 
-  // Screen 18 Reveal banner
+  // ==========================================
+  // شاشة اختيار السؤال / التحدي (Problem 2)
+  // ==========================================
+  Widget _buildQuestionSelectionView(
+    BuildContext context,
+    TriviaGameState state,
+    TriviaGameNotifier notifier,
+  ) {
+    final remainingIndices = state.remainingQuestionIndices;
+    final currentRoundNum = state.playedQuestionIndices.length + 1;
+    final total = state.totalQuestions;
+
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_forward, color: Colors.white),
+          onPressed: () => context.go('/lobby'),
+        ),
+        title: Text(
+          'تحدي الشلة (سؤال $currentRoundNum من $total)',
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'اختر السؤال اللي تحب تلعبه:',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.accentSaffron,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'اضغط على أي كارت تختاره أو اضغط على عشوائي',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // قائمة الأسئلة المتاحة للاختيار
+              Expanded(
+                child: remainingIndices.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'لا توجد أسئلة متبقية',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
+                      )
+                    : ListView.separated(
+                        itemCount: remainingIndices.length,
+                        separatorBuilder: (context, index) => const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final qIndex = remainingIndices[index];
+                          final q = state.questions[qIndex];
+                          final categoryTitle = _getCategoryTitle(q.categorySlug);
+
+                          return Material(
+                            color: AppTheme.cardBg,
+                            borderRadius: BorderRadius.circular(18),
+                            child: InkWell(
+                              onTap: () {
+                                notifier.selectQuestion(qIndex);
+                              },
+                              borderRadius: BorderRadius.circular(18),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: AppTheme.accentSaffron.withValues(alpha: 0.3),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 44,
+                                      height: 44,
+                                      decoration: BoxDecoration(
+                                        color: AppTheme.accentSaffron.withValues(alpha: 0.15),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: const Text('🎯', style: TextStyle(fontSize: 20)),
+                                    ),
+                                    const SizedBox(width: 14),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                            decoration: BoxDecoration(
+                                              color: AppTheme.accentSaffron.withValues(alpha: 0.2),
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              categoryTitle,
+                                              style: const TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                color: AppTheme.accentSaffron,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(
+                                            q.promptAr,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Icon(
+                                      Icons.arrow_forward_ios,
+                                      size: 16,
+                                      color: AppTheme.accentSaffron,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // زر اختيار عشوائي كخيار إضافي
+              PrimaryButton(
+                title: 'اختيار عشوائي 🎲',
+                icon: Icons.shuffle,
+                accentColor: AppTheme.accentSaffron,
+                onPressed: () {
+                  notifier.selectRandomQuestion();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getCategoryTitle(String slug) {
+    switch (slug) {
+      case 'movies':
+        return 'أفلام ومسلسلات';
+      case 'sports':
+        return 'كورة ورياضة';
+      case 'afeehat':
+        return 'أفيهات وقفشات';
+      case 'history':
+        return 'تاريخ ومعالم';
+      default:
+        return 'منوعات عامة';
+    }
+  }
+
+  // Reveal banner
   Widget _buildCorrectBanner({required int points}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -206,7 +394,6 @@ class TriviaPlayScreen extends ConsumerWidget {
     );
   }
 
-  // Screen 19 Reveal banner
   Widget _buildWrongBanner() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
@@ -260,7 +447,7 @@ class TriviaPlayScreen extends ConsumerWidget {
     );
   }
 
-  // Option card with design 17, 18, 19 states
+  // Option card with design states and reliable Material/InkWell gesture handling
   Widget _buildOptionCard({
     required int index,
     required String text,
@@ -281,7 +468,6 @@ class TriviaPlayScreen extends ConsumerWidget {
 
       if (isThisCorrect) {
         if (isThisSelected) {
-          // Screen 18 chosen correct: full mint card
           bgColor = AppTheme.accentMint;
           borderColor = AppTheme.accentMint;
           textColor = const Color(0xFF101428);
@@ -295,7 +481,6 @@ class TriviaPlayScreen extends ConsumerWidget {
             child: const Icon(Icons.check, color: AppTheme.accentMint, size: 20),
           );
         } else {
-          // Screen 19 correct answer highlight: cardBg with mint border & mint check
           bgColor = AppTheme.cardBg;
           borderColor = AppTheme.accentMint;
           textColor = AppTheme.accentMint;
@@ -310,48 +495,50 @@ class TriviaPlayScreen extends ConsumerWidget {
           );
         }
       } else if (isThisSelected) {
-        // Screen 19 chosen wrong answer: coral card with close icon
         bgColor = AppTheme.accentCoral;
         borderColor = AppTheme.accentCoral;
         textColor = const Color(0xFF101428);
         trailingIcon = Container(
-            width: 32,
-            height: 32,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: const Color(0xFF101428).withValues(alpha: 0.2),
-            ),
-            child: const Icon(Icons.close, color: Color(0xFF101428), size: 20),
-          );
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFF101428).withValues(alpha: 0.2),
+          ),
+          child: const Icon(Icons.close, color: Color(0xFF101428), size: 20),
+        );
       }
     }
 
-    return InkWell(
-      onTap: isLocked ? null : onTap,
+    return Material(
+      color: bgColor,
       borderRadius: BorderRadius.circular(20),
-      child: Container(
-        height: 64,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: borderColor, width: 2),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Text(
-                text,
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
+      child: InkWell(
+        onTap: isLocked ? null : onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          height: 64,
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: borderColor, width: 2),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
                 ),
               ),
-            ),
-            ?trailingIcon,
-          ],
+              trailingIcon ?? const SizedBox.shrink(),
+            ],
+          ),
         ),
       ),
     );

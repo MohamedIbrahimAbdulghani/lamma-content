@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/secondary_button.dart';
 import '../../core/widgets/stepper_row.dart';
 import '../../data/providers/game_providers.dart';
+import 'ai_generation_sheet.dart';
 
 class HostSettingsTriviaScreen extends ConsumerWidget {
   const HostSettingsTriviaScreen({super.key});
@@ -110,6 +112,16 @@ class HostSettingsTriviaScreen extends ConsumerWidget {
                         _buildCategoryChip('عامة', 'general', settings.categories, notifier.toggleCategory),
                       ],
                     ),
+                    const SizedBox(height: 24),
+
+                    // زر توليد الأسئلة بالذكاء الاصطناعي للمضيف
+                    SecondaryButton(
+                      title: 'توليد أسئلة طازجة بالذكاء الاصطناعي',
+                      icon: Icons.auto_awesome,
+                      borderColor: AppTheme.accentMint,
+                      textColor: AppTheme.accentMint,
+                      onPressed: () => showAiGenerationSheet(context, gameType: 'trivia'),
+                    ),
                     const SizedBox(height: 32),
                   ],
                 ),
@@ -119,7 +131,13 @@ class HostSettingsTriviaScreen extends ConsumerWidget {
                 title: 'حفظ وارجع للوبي',
                 icon: Icons.check,
                 accentColor: AppTheme.accentSaffron,
-                onPressed: () => context.pop(),
+                onPressed: () {
+                  final current = ref.read(triviaSettingsProvider);
+                  ref.read(gameRoomProvider.notifier).server?.updateSettings({
+                    'trivia': current.toJson(),
+                  });
+                  context.pop();
+                },
               ),
               const SizedBox(height: 12),
             ],

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/routes/app_routes.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
@@ -49,13 +50,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        onPressed: () => context.push('/settings'),
+                        onPressed: () => context.push(AppRoutes.settings),
                         icon: const Icon(Icons.settings, color: AppColors.textSecondary, size: 24),
                         tooltip: 'الإعدادات',
                       ),
                       const SizedBox(width: 4),
                       InkWell(
-                        onTap: () => context.push('/howto'),
+                        onTap: () => context.push(AppRoutes.howToMenu),
                         borderRadius: BorderRadius.circular(9999),
                         child: Container(
                           width: 40,
@@ -114,12 +115,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               PrimaryButton(
                 label: 'أنشئ غرفة',
                 backgroundColor: AppColors.generalAccent,
-                onPressed: () => context.push('/room/create?mode=${currentSelectedGame.name}'),
+                onPressed: () => context.push('${AppRoutes.createRoom}?mode=${currentSelectedGame.name}'),
               ),
               const SizedBox(height: AppDimensions.rowGap),
               SecondaryButton(
                 label: 'ادخل غرفة',
-                onPressed: () => context.push('/room/join'),
+                onPressed: () => context.push(AppRoutes.joinRoom),
               ),
               const SizedBox(height: 16),
               // Bottom Brand Signature

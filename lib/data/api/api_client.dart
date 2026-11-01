@@ -27,7 +27,7 @@ class ApiClient {
           BaseOptions(
             baseUrl: ApiConfig.baseUrl,
             connectTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 5),
+            receiveTimeout: const Duration(seconds: 15),
             headers: {
               'Accept': 'application/json',
               'Content-Type': 'application/json',
@@ -115,7 +115,53 @@ class ApiClient {
     }
   }
 
-  // 5. Health check
+  // 5. Generate AI Content via Backend Proxy
+  Future<List<Map<String, dynamic>>> generateAiContent({
+    required String gameType,
+    String? category,
+    List<String>? categories,
+    String? difficulty,
+    int count = 20,
+    List<String> excludeItems = const [],
+  }) async {
+    try {
+      final payload = <String, dynamic>{
+        'game_type': gameType,
+        'count': count,
+        'exclude_items': excludeItems,
+      };
+      if (category != null && category.isNotEmpty) {
+        payload['category'] = category;
+      }
+      if (categories != null && categories.isNotEmpty) {
+        payload['categories'] = categories;
+      }
+      if (difficulty != null && difficulty.isNotEmpty) {
+        payload['difficulty'] = difficulty;
+      }
+      final response = await _dio.post(
+        '/content/generate',
+        data: payload,
+      );
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        final data = response.data['data'] as List<dynamic>? ?? [];
+        return data.cast<Map<String, dynamic>>();
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // 6. Reset device history on server
+  Future<bool> resetDeviceHistory() async {
+    try {
+      final response = await _dio.post('/history/reset');
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // 7. Health check
   Future<bool> checkHealth() async {
     try {
       final response = await _dio.get('/health');

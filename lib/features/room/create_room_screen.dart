@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../core/routes/app_routes.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/theme/app_theme.dart';
@@ -79,7 +80,6 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
     await server.start();
     server.updateGameMode(chosenGame.name);
     roomNotifier.setHostServer(server, _roomCode, _hostIp);
-    roomNotifier.setSelectedGame(chosenGame);
 
     if (mounted) {
       setState(() {});
@@ -228,7 +228,7 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
               PrimaryButton(
                 label: 'ادخل اللوبي',
                 backgroundColor: AppColors.generalAccent,
-                onPressed: () => context.push('/lobby'),
+                onPressed: () => context.push(AppRoutes.lobby),
               ),
               const SizedBox(height: 16),
             ],

@@ -18,7 +18,8 @@ class TriviaLeaderboardScreen extends ConsumerWidget {
 
     // Listen to auto-advancing from leaderboard
     ref.listen<TriviaGameState>(triviaGameProvider, (previous, next) {
-      if (next.phase == TriviaPhase.question) {
+      if (next.phase == TriviaPhase.question ||
+          next.phase == TriviaPhase.questionSelection) {
         context.go('/trivia/question');
       } else if (next.phase == TriviaPhase.completed) {
         context.go('/feedback/final-results');

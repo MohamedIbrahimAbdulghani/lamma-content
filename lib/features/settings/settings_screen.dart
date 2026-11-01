@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
+import '../lobby/ai_generation_sheet.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -15,6 +17,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
+  bool _isResetting = false;
 
   final List<String> _avatars = [
     '🦁', '🦊', '🐻', '🐼', '🐯', '🐨', '🐸', '🦉',
@@ -81,9 +84,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 16),
-              Expanded(
+              SizedBox(
+                height: 280,
                 child: GridView.builder(
                   shrinkWrap: true,
+                  physics: const BouncingScrollPhysics(),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 5,
                     mainAxisSpacing: 12,
@@ -117,6 +122,64 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  void _confirmResetHistory() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppTheme.cardBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'إعادة ضبط سجل الأسئلة والكلمات',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
+        ),
+        content: const Text(
+          'هل تريد بالتأكيد تصفير تاريخ جميع الأسئلة والكلمات التي لُعبت سابقاً في كل الألعاب؟\nهذا سيتيح للعبة استخدام البنك كاملاً من البداية.',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 16, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء', style: TextStyle(color: AppTheme.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentCoral,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              setState(() => _isResetting = true);
+              try {
+                await ref.read(gameContentServiceProvider).resetAllHistory();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تمت إعادة ضبط سجل الأسئلة بنجاح! 🎉'),
+                      backgroundColor: AppTheme.accentMint,
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } catch (_) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('حدث خطأ أثناء إعادة ضبط السجل'),
+                      backgroundColor: AppTheme.accentCoral,
+                    ),
+                  );
+                }
+              } finally {
+                if (mounted) setState(() => _isResetting = false);
+              }
+            },
+            child: const Text('نعم، أعد الضبط', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final playerName = ref.watch(currentPlayerNameProvider);
@@ -133,16 +196,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         title: const Text(
           'الإعدادات',
-          style: TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
         ),
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
           child: ListView(
             children: [
               // Edit Name
@@ -150,8 +209,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: _showNameDialog,
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: AppTheme.cardBg,
                     borderRadius: BorderRadius.circular(16),
@@ -160,12 +219,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text('اسمك', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                      Row(
-                        children: [
-                          Text(playerName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.accentSaffron)),
-                          const SizedBox(width: 8),
-                          const Icon(Icons.edit, size: 18, color: AppTheme.textSecondary),
-                        ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                playerName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.accentSaffron),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            const Icon(Icons.edit, size: 18, color: AppTheme.textSecondary),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -178,8 +248,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: _showAvatarDialog,
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: AppTheme.cardBg,
                     borderRadius: BorderRadius.circular(16),
@@ -187,8 +257,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('الصورة الرمزية', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                      const Expanded(
+                        child: Text(
+                          'الصورة الرمزية',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
                       Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           CircleAvatar(
                             radius: 18,
@@ -207,8 +285,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
               // Sound Toggle
               Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                constraints: const BoxConstraints(minHeight: 60),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
                   color: AppTheme.cardBg,
                   borderRadius: BorderRadius.circular(16),
@@ -216,7 +294,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('الأصوات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                    const Expanded(
+                      child: Text(
+                        'الأصوات',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ),
                     Switch(
                       value: _soundEnabled,
                       activeThumbColor: const Color(0xFF101428),
@@ -230,8 +315,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
               // Vibration Toggle
               Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
+                constraints: const BoxConstraints(minHeight: 60),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
                   color: AppTheme.cardBg,
                   borderRadius: BorderRadius.circular(16),
@@ -239,7 +324,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text('الاهتزاز', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                    const Expanded(
+                      child: Text(
+                        'الاهتزاز',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ),
                     Switch(
                       value: _vibrationEnabled,
                       activeThumbColor: const Color(0xFF101428),
@@ -251,26 +343,115 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 12),
 
-              // Last Updated
-              Container(
-                height: 64,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                decoration: BoxDecoration(
-                  color: AppTheme.cardBg,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('آخر تحديث للأسئلة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
-                    Row(
-                      children: const [
-                        Icon(Icons.check_circle, size: 18, color: AppTheme.accentMint),
-                        SizedBox(width: 6),
-                        Text('الإصدار v1.0', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
-                      ],
+              // زر إعادة ضبط السجل (Problem 4.6)
+              InkWell(
+                onTap: _isResetting ? null : _confirmResetHistory,
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cardBg,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppTheme.accentCoral.withValues(alpha: 0.5),
+                      width: 1.5,
                     ),
-                  ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: const [
+                            Icon(Icons.restart_alt, color: AppTheme.accentCoral, size: 22),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'إعادة ضبط سجل الأسئلة',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.accentCoral,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (_isResetting)
+                        const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.accentCoral),
+                        )
+                      else
+                        const Icon(Icons.arrow_back, size: 20, color: AppTheme.accentCoral),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // زر توليد الأسئلة بالذكاء الاصطناعي
+              InkWell(
+                onTap: () => showAiGenerationSheet(context, gameType: 'trivia'),
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.cardBg,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: AppTheme.accentMint.withValues(alpha: 0.4),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Row(
+                          children: const [
+                            Icon(Icons.auto_awesome, color: AppTheme.accentMint, size: 22),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'توليد الأسئلة بالذكاء الاصطناعي',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Text(
+                            'Gemini AI',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.accentMint,
+                            ),
+                          ),
+                          SizedBox(width: 4),
+                          Icon(Icons.arrow_back, size: 16, color: AppTheme.accentMint),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
@@ -280,8 +461,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: () => context.push('/how-to'),
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: AppTheme.cardBg,
                     borderRadius: BorderRadius.circular(16),
@@ -289,7 +470,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
-                      Text('طريقة اللعب', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                      Expanded(
+                        child: Text(
+                          'طريقة اللعب',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
                       Icon(Icons.arrow_back, size: 22, color: AppTheme.textSecondary),
                     ],
                   ),
@@ -302,8 +490,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 onTap: () => context.push('/about'),
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  constraints: const BoxConstraints(minHeight: 60),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     color: AppTheme.cardBg,
                     borderRadius: BorderRadius.circular(16),
@@ -311,12 +499,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
-                      Text('عن التطبيق', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                      Expanded(
+                        child: Text(
+                          'عن التطبيق',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ),
                       Icon(Icons.arrow_back, size: 22, color: AppTheme.textSecondary),
                     ],
                   ),
                 ),
               ),
+              const SizedBox(height: 16),
             ],
           ),
         ),

@@ -1,10 +1,13 @@
 // Lamma - by Mohamed Ibrahim
 
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lamma_party_game_app/data/models/bootstrap_data.dart';
 import 'package:lamma_party_game_app/data/models/player_model.dart';
 import 'package:lamma_party_game_app/data/models/question_model.dart';
 import 'package:lamma_party_game_app/data/providers/game_providers.dart';
+import 'package:lamma_party_game_app/data/services/game_content_service.dart';
 import 'package:lamma_party_game_app/features/trivia/domain/trivia_scorer.dart';
 import 'trivia_state.dart';
 
@@ -42,11 +45,90 @@ const List<QuestionModel> kDefaultTriviaQuestions = [
     difficulty: 'medium',
     source: 'seed',
   ),
+  QuestionModel(
+    id: 4,
+    categoryId: 1,
+    categorySlug: 'movies',
+    type: 'mcq',
+    promptAr: 'مين مخرج فيلم "الأرض" الشهير؟',
+    options: ['يوسف شاهين', 'صلاح أبو سيف', 'عاطف الطيب', 'داود عبد السيد'],
+    correctIndex: 0,
+    difficulty: 'medium',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 5,
+    categoryId: 3,
+    categorySlug: 'afeehat',
+    type: 'mcq',
+    promptAr: 'في فيلم الناظر، مين جسد شخصية "عاطف"؟',
+    options: ['أحمد حلمي', 'علاء ولي الدين', 'محمد سعد', 'حسن حسني'],
+    correctIndex: 0,
+    difficulty: 'easy',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 6,
+    categoryId: 2,
+    categorySlug: 'sports',
+    type: 'mcq',
+    promptAr: 'منتخب مصر فاز بكأس أمم إفريقيا كام مرة تاريخياً؟',
+    options: ['5 مرات', '6 مرات', '7 مرات', '8 مرات'],
+    correctIndex: 2,
+    difficulty: 'easy',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 7,
+    categoryId: 4,
+    categorySlug: 'history',
+    type: 'mcq',
+    promptAr: 'مين بنى قلعة الجبل في القاهرة؟',
+    options: ['صلاح الدين الأيوبي', 'محمد علي باشا', 'الظاهر بيبرس', 'قطز'],
+    correctIndex: 0,
+    difficulty: 'easy',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 8,
+    categoryId: 3,
+    categorySlug: 'afeehat',
+    type: 'mcq',
+    promptAr: 'صاحب إفيه: "كله ضرب ضرب مفيش شتيمة؟"',
+    options: ['عادل إمام', 'محمد سعد', 'فؤاد المهندس', 'سعيد صالح'],
+    correctIndex: 0,
+    difficulty: 'easy',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 9,
+    categoryId: 1,
+    categorySlug: 'movies',
+    type: 'mcq',
+    promptAr: 'إيه اسم القرية في فيلم "الزوجة الثانية"؟',
+    options: ['ميت العطار', 'ميت حبيب', 'ميت غمر', 'كفر الدوار'],
+    correctIndex: 0,
+    difficulty: 'hard',
+    source: 'seed',
+  ),
+  QuestionModel(
+    id: 10,
+    categoryId: 2,
+    categorySlug: 'sports',
+    type: 'mcq',
+    promptAr: 'مين صاحب هدف فوز الزمالك بكأس الكونفدرالية 2019؟',
+    options: ['محمود علاء', 'يوسف أوباما', 'فرجاني ساسي', 'طارق حامد'],
+    correctIndex: 0,
+    difficulty: 'medium',
+    source: 'seed',
+  ),
 ];
 
 class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
   final Map<String, dynamic>? scoringSettings;
   final void Function(List<PlayerModel>)? onPlayersUpdated;
+  final bool startWithSelection;
+  final GameContentService? contentService;
 
   Timer? _questionTimer;
   Timer? _revealTimer;
@@ -61,14 +143,18 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     this.onPlayersUpdated,
     String myPlayerId = '1',
     bool autoStart = true,
+    this.startWithSelection = false,
+    this.contentService,
   }) : super(TriviaGameState(
           questions: initialQuestions ?? kDefaultTriviaQuestions,
           totalSeconds: totalSeconds,
           secondsLeft: totalSeconds,
+          phase: startWithSelection ? TriviaPhase.questionSelection : TriviaPhase.question,
           players: initialPlayers ?? _buildDefaultPlayers(),
           myPlayerId: myPlayerId,
+          playedQuestionIndices: const [],
         )) {
-    if (autoStart && state.questions.isNotEmpty) {
+    if (autoStart && !startWithSelection && state.questions.isNotEmpty) {
       _startQuestionTimer();
     }
   }
@@ -99,7 +185,41 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     });
   }
 
-  /// Lock answer after first tap and transition to reveal screen for 2s.
+  /// اختيار سؤال محدد من القائمة وبدء لعبه
+  void selectQuestion(int questionIndex) {
+    if (questionIndex < 0 || questionIndex >= state.questions.length) return;
+
+    final played = List<int>.from(state.playedQuestionIndices);
+    if (!played.contains(questionIndex)) {
+      played.add(questionIndex);
+    }
+
+    state = state.copyWith(
+      currentQuestionIndex: questionIndex,
+      playedQuestionIndices: played,
+      phase: TriviaPhase.question,
+      secondsLeft: state.totalSeconds,
+      clearSelectedOption: true,
+      isAnswerLocked: false,
+      answerResult: TriviaAnswerResult.none,
+      lastEarnedPoints: 0,
+    );
+
+    _startQuestionTimer();
+  }
+
+  /// اختيار سؤال عشوائي من الأسئلة المتبقية
+  void selectRandomQuestion() {
+    final remaining = state.remainingQuestionIndices;
+    if (remaining.isNotEmpty) {
+      final randomIndex = remaining[Random().nextInt(remaining.length)];
+      selectQuestion(randomIndex);
+    } else if (state.questions.isNotEmpty) {
+      selectQuestion(Random().nextInt(state.questions.length));
+    }
+  }
+
+  /// بنقفل الإجابة بعد أول ضغطة وبننقل لشاشة الكشف لمدة 2 ثانية
   void submitAnswer(int optionIndex) {
     if (state.isAnswerLocked || state.phase != TriviaPhase.question) {
       return;
@@ -111,14 +231,16 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     if (currentQ == null) return;
 
     final isCorrect = (optionIndex == currentQ.correctIndex);
-    final earnedPoints = TriviaScorer.calculateFromSettings(
-      isCorrect: isCorrect,
-      remainingSeconds: state.secondsLeft,
-      totalSeconds: state.totalSeconds,
-      scoringSettings: scoringSettings,
-    );
+    final earnedPoints = currentQ.points > 100
+        ? TriviaScorer.calculateScore(isCorrect: isCorrect, questionPoints: currentQ.points)
+        : TriviaScorer.calculateScore(
+            isCorrect: isCorrect,
+            questionPoints: currentQ.points,
+            remainingSeconds: state.secondsLeft,
+            totalSeconds: state.totalSeconds,
+          );
 
-    // Add points immediately to player.score
+    // إضافة النقط للاعب
     final updatedPlayers = state.players.map((p) {
       if (p.id == state.myPlayerId) {
         return p.copyWith(score: p.score + earnedPoints);
@@ -139,7 +261,7 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     _startRevealTimer();
   }
 
-  /// When timer ends with no answer, lock answer and auto-advance to reveal screen.
+  /// لما الوقت يخلص من غير إجابة، بنقفل وننقل لشاشة الكشف
   void onTimeOut() {
     if (state.isAnswerLocked || state.phase != TriviaPhase.question) {
       return;
@@ -148,7 +270,7 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     _questionTimer?.cancel();
 
     state = state.copyWith(
-      selectedOptionIndex: null,
+      clearSelectedOption: true,
       isAnswerLocked: true,
       answerResult: TriviaAnswerResult.wrong,
       lastEarnedPoints: 0,
@@ -158,15 +280,15 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     _startRevealTimer();
   }
 
-  /// 2-second reveal timer. Automatically advances to leaderboard screen (never stuck).
+  /// تايمر الكشف 1.5 ثانية، بينقل تلقائياً للترتيب
   void _startRevealTimer() {
     _revealTimer?.cancel();
-    _revealTimer = Timer(const Duration(seconds: 2), () {
+    _revealTimer = Timer(const Duration(milliseconds: 1500), () {
       advanceFromReveal();
     });
   }
 
-  /// Advance from reveal screen 18/19 to leaderboard screen 21.
+  /// الانتقال من الكشف للترتيب
   void advanceFromReveal() {
     _revealTimer?.cancel();
     state = state.copyWith(
@@ -176,7 +298,7 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     _startLeaderboardTimer();
   }
 
-  /// 3-second leaderboard timer. Automatically advances to next question or final results.
+  /// تايمر الترتيب 3 ثواني
   void _startLeaderboardTimer() {
     _leaderboardTimer?.cancel();
     _leaderboardPeriodicTimer?.cancel();
@@ -194,47 +316,98 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     });
   }
 
-  /// Advance to next question or final results screen 36.
+  /// الانتقال للسؤال التالي أو شاشة اختيار السؤال أو شاشة النتائج النهائية
   void advanceFromLeaderboard() {
     _leaderboardTimer?.cancel();
     _leaderboardPeriodicTimer?.cancel();
 
-    if (state.currentQuestionIndex + 1 < state.totalQuestions) {
-      final nextIndex = state.currentQuestionIndex + 1;
-      state = state.copyWith(
-        currentQuestionIndex: nextIndex,
-        phase: TriviaPhase.question,
-        secondsLeft: state.totalSeconds,
-        selectedOptionIndex: null,
-        isAnswerLocked: false,
-        answerResult: TriviaAnswerResult.none,
-        lastEarnedPoints: 0,
-        leaderboardSecondsLeft: 3,
-      );
-      _startQuestionTimer();
+    if (startWithSelection) {
+      final remaining = state.remainingQuestionIndices;
+      final hasMore = remaining.isNotEmpty && state.playedQuestionIndices.length < state.totalQuestions;
+
+      if (hasMore) {
+        state = state.copyWith(
+          phase: TriviaPhase.questionSelection,
+          clearSelectedOption: true,
+          isAnswerLocked: false,
+          answerResult: TriviaAnswerResult.none,
+          lastEarnedPoints: 0,
+          leaderboardSecondsLeft: 3,
+        );
+      } else {
+        state = state.copyWith(phase: TriviaPhase.completed);
+      }
     } else {
-      state = state.copyWith(phase: TriviaPhase.completed);
+      // النمط التسلسلي التلقائي (المستخدم في الاختبارات واللعب الخطي)
+      if (state.currentQuestionIndex + 1 < state.totalQuestions) {
+        final nextIndex = state.currentQuestionIndex + 1;
+        state = state.copyWith(
+          currentQuestionIndex: nextIndex,
+          phase: TriviaPhase.question,
+          secondsLeft: state.totalSeconds,
+          clearSelectedOption: true,
+          isAnswerLocked: false,
+          answerResult: TriviaAnswerResult.none,
+          lastEarnedPoints: 0,
+          leaderboardSecondsLeft: 3,
+        );
+        _startQuestionTimer();
+      } else {
+        state = state.copyWith(phase: TriviaPhase.completed);
+      }
     }
   }
 
-  /// Restart game with fresh scores.
-  void restartGame({List<QuestionModel>? newQuestions}) {
+  /// إعادة اللعبة بأسئلة وسكور جديد مع تطبيق الإعدادات المختارة
+  Future<void> restartGame({
+    List<QuestionModel>? newQuestions,
+    int? questionCount,
+    int? totalSeconds,
+    List<String>? categories,
+    String? difficulty,
+    BootstrapData? bootstrapData,
+  }) async {
     _questionTimer?.cancel();
     _revealTimer?.cancel();
     _leaderboardTimer?.cancel();
     _leaderboardPeriodicTimer?.cancel();
 
     final resetPlayers = state.players.map((p) => p.copyWith(score: 0)).toList();
+    onPlayersUpdated?.call(resetPlayers);
+
+    List<QuestionModel> questionsToUse = newQuestions ?? [];
+    if (questionsToUse.isEmpty && contentService != null) {
+      questionsToUse = await contentService!.getTriviaQuestions(
+        count: questionCount ?? 10,
+        categories: categories ?? const [],
+        difficulty: difficulty ?? 'all',
+        bootstrapData: bootstrapData,
+      );
+    }
+
+    if (questionsToUse.isEmpty) {
+      questionsToUse = List.from(kDefaultTriviaQuestions)..shuffle(Random());
+      final c = questionCount ?? 10;
+      if (c > 0 && c < questionsToUse.length) {
+        questionsToUse = questionsToUse.take(c).toList();
+      }
+    }
+
+    final seconds = totalSeconds ?? state.totalSeconds;
 
     state = TriviaGameState(
-      questions: newQuestions ?? state.questions,
-      totalSeconds: state.totalSeconds,
-      secondsLeft: state.totalSeconds,
+      questions: questionsToUse,
+      totalSeconds: seconds,
+      secondsLeft: seconds,
+      phase: startWithSelection ? TriviaPhase.questionSelection : TriviaPhase.question,
       players: resetPlayers,
       myPlayerId: state.myPlayerId,
+      playedQuestionIndices: const [],
     );
 
-    _startQuestionTimer();
+    if (!startWithSelection && questionsToUse.isNotEmpty) {
+      _startQuestionTimer();
+    }
   }
 
   @override
@@ -248,17 +421,18 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
 }
 
 final triviaGameProvider = StateNotifierProvider<TriviaGameNotifier, TriviaGameState>((ref) {
+  // مراقبة إعدادات تحدي الشلة لضمان استجابة وتحديث البروفايدر بالقيم المحفوظة
   final triviaSettings = ref.watch(triviaSettingsProvider);
-  final bootstrap = ref.watch(bootstrapProvider);
+  final bootstrap = ref.read(bootstrapProvider);
   final scoringSettings = bootstrap.data?.settings['scoring'] as Map<String, dynamic>?;
-  final roomState = ref.watch(gameRoomProvider);
-  final currentPlayerName = ref.watch(currentPlayerNameProvider);
-  final currentPlayerAvatar = ref.watch(currentPlayerAvatarProvider);
+  final roomState = ref.read(gameRoomProvider);
+  final currentPlayerName = ref.read(currentPlayerNameProvider);
+  final currentPlayerAvatar = ref.read(currentPlayerAvatarProvider);
+  final contentService = ref.read(gameContentServiceProvider);
 
-  // Use players from roomState if present; else build default with user profile
   List<PlayerModel> initialPlayers;
   if (roomState.players.isNotEmpty) {
-    initialPlayers = roomState.players;
+    initialPlayers = roomState.players.map((p) => p.copyWith(score: 0)).toList();
   } else {
     initialPlayers = TriviaGameNotifier._buildDefaultPlayers(
       currentName: currentPlayerName,
@@ -266,11 +440,24 @@ final triviaGameProvider = StateNotifierProvider<TriviaGameNotifier, TriviaGameS
     );
   }
 
+  // إذا كانت هناك أسئلة جاهزة وموزعة من الغرفة الجماعية نستخدمها مباشرة
+  List<QuestionModel> selectedQuestions;
+  if (roomState.triviaQuestions.isNotEmpty) {
+    selectedQuestions = roomState.triviaQuestions;
+  } else {
+    final questions = List<QuestionModel>.from(kDefaultTriviaQuestions)..shuffle(Random());
+    final count = triviaSettings.questionsCount > 0 ? triviaSettings.questionsCount : 10;
+    selectedQuestions = questions.take(count).toList();
+  }
+
   return TriviaGameNotifier(
+    initialQuestions: selectedQuestions,
     totalSeconds: triviaSettings.timePerQuestion,
     scoringSettings: scoringSettings,
     initialPlayers: initialPlayers,
     myPlayerId: roomState.myPlayerId.isNotEmpty ? roomState.myPlayerId : '1',
+    startWithSelection: false,
+    contentService: contentService,
     onPlayersUpdated: (players) {
       ref.read(gameRoomProvider.notifier).setPlayers(players);
     },

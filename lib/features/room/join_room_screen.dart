@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../../core/routes/app_routes.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/row_card.dart';
 import '../../data/providers/game_providers.dart';
@@ -51,6 +52,7 @@ class _JoinRoomScreenState extends ConsumerState<JoinRoomScreen> {
       playerName: playerName,
       playerEmoji: playerEmoji,
       deviceId: deviceId,
+      storage: storage,
       onStateUpdated: (state) {
         if (mounted) roomNotifier.updateFromNetwork(state);
       },
@@ -72,10 +74,10 @@ class _JoinRoomScreenState extends ConsumerState<JoinRoomScreen> {
       },
     );
 
-    final success = await client.connect();
-    if (success) {
+    final result = await client.connect();
+    if (result.isSuccess) {
       roomNotifier.setClient(client, code, host);
-      if (mounted) context.push('/lobby');
+      if (mounted) context.push(AppRoutes.lobby);
     }
   }
 
@@ -166,7 +168,7 @@ class _JoinRoomScreenState extends ConsumerState<JoinRoomScreen> {
               const SizedBox(height: AppDimensions.rowGap),
               // Dialpad Code Button
               RowCard(
-                onTap: () => context.push('/room/join/code'),
+                onTap: () => context.push(AppRoutes.joinByCode),
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
