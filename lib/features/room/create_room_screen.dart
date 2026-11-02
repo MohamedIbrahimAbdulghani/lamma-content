@@ -77,9 +77,19 @@ class _CreateRoomScreenState extends ConsumerState<CreateRoomScreen> {
       },
     );
 
+    server.setHostSeenHashes(
+      triviaPrompts: storage.getSeenTriviaPromptHashes(),
+      triviaAnswers: storage.getSeenTriviaAnswerHashes(),
+      spyWords: storage.getSeenSpyHashes(),
+      charadesWords: storage.getSeenCharadesHashes(),
+    );
+
     await server.start();
     server.updateGameMode(chosenGame.name);
     roomNotifier.setHostServer(server, _roomCode, _hostIp);
+
+    // تسجيل جلسة الغرفة على الخادم لتتبع الحاضرين واستبعاد المحتوى المشاهد مشتركاً
+    ref.read(apiClientProvider).createRoomSession(_roomCode, gameMode: chosenGame.name);
 
     if (mounted) {
       setState(() {});

@@ -1,5 +1,7 @@
 // Lamma - by Mohamed Ibrahim
 
+import '../../core/utils/arabic_text_normalizer.dart';
+
 class QuestionModel {
   final int id;
   final int categoryId;
@@ -8,7 +10,8 @@ class QuestionModel {
   final String promptAr;
   final String? emojiPrompt;
   final List<String> options;
-  final int correctIndex;
+  final int correctIndex; // -1 if hidden from client
+  final String? saltedHash;
   final String difficulty;
   final String? explanationAr;
   final String source;
@@ -22,7 +25,8 @@ class QuestionModel {
     required this.promptAr,
     this.emojiPrompt,
     required this.options,
-    required this.correctIndex,
+    this.correctIndex = -1,
+    this.saltedHash,
     required this.difficulty,
     this.explanationAr,
     required this.source,
@@ -38,7 +42,8 @@ class QuestionModel {
       promptAr: json['prompt_ar'] as String? ?? '',
       emojiPrompt: json['emoji_prompt'] as String?,
       options: (json['options'] as List<dynamic>? ?? []).map((e) => e.toString()).toList(),
-      correctIndex: json['correct_index'] as int? ?? 0,
+      correctIndex: json['correct_index'] as int? ?? -1,
+      saltedHash: json['salted_hash'] as String?,
       difficulty: json['difficulty'] as String? ?? 'medium',
       explanationAr: json['explanation_ar'] as String?,
       source: json['source'] as String? ?? 'seed',
@@ -46,7 +51,52 @@ class QuestionModel {
     );
   }
 
-  Map<String, dynamic> toJson() => {
+  /// التحقق من صحة الإجابة سواء كان correctIndex معلوماً أو عبر التجزئة المملحة (أوفلاين)
+  bool isOptionCorrect(int optionIndex) {
+    if (optionIndex < 0 || optionIndex >= options.length) return false;
+    if (correctIndex >= 0) {
+      return optionIndex == correctIndex;
+    }
+    if (saltedHash != null && saltedHash!.isNotEmpty) {
+      final computed = ArabicTextNormalizer.saltedAnswerHash(id, options[optionIndex]);
+      return computed == saltedHash;
+    }
+    return false;
+  }
+
+  QuestionModel copyWith({
+    int? id,
+    int? categoryId,
+    String? categorySlug,
+    String? type,
+    String? promptAr,
+    String? emojiPrompt,
+    List<String>? options,
+    int? correctIndex,
+    String? saltedHash,
+    String? difficulty,
+    String? explanationAr,
+    String? source,
+    int? points,
+  }) {
+    return QuestionModel(
+      id: id ?? this.id,
+      categoryId: categoryId ?? this.categoryId,
+      categorySlug: categorySlug ?? this.categorySlug,
+      type: type ?? this.type,
+      promptAr: promptAr ?? this.promptAr,
+      emojiPrompt: emojiPrompt ?? this.emojiPrompt,
+      options: options ?? this.options,
+      correctIndex: correctIndex ?? this.correctIndex,
+      saltedHash: saltedHash ?? this.saltedHash,
+      difficulty: difficulty ?? this.difficulty,
+      explanationAr: explanationAr ?? this.explanationAr,
+      source: source ?? this.source,
+      points: points ?? this.points,
+    );
+  }
+
+  Map<String, dynamic> toJson({bool reveal = true}) => {
     'id': id,
     'category_id': categoryId,
     'category_slug': categorySlug,
@@ -54,9 +104,10 @@ class QuestionModel {
     'prompt_ar': promptAr,
     'emoji_prompt': emojiPrompt,
     'options': options,
-    'correct_index': correctIndex,
+    'correct_index': reveal ? correctIndex : -1,
+    if (saltedHash != null) 'salted_hash': saltedHash,
     'difficulty': difficulty,
-    'explanation_ar': explanationAr,
+    'explanation_ar': reveal ? explanationAr : null,
     'source': source,
     'points': points,
   };

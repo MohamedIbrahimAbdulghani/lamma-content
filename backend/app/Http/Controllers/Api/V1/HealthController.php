@@ -4,6 +4,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\GenerateAiContentService;
 use Illuminate\Http\JsonResponse;
 
 class HealthController extends Controller
@@ -16,5 +17,13 @@ class HealthController extends Controller
             'developer' => 'Mohamed Ibrahim',
             'timestamp' => now()->toIso8601String(),
         ]);
+    }
+
+    public function aiHealth(GenerateAiContentService $aiService): JsonResponse
+    {
+        $health = $aiService->checkHealth();
+        $statusCode = $health['healthy'] ? 200 : 503;
+
+        return response()->json($health, $statusCode);
     }
 }

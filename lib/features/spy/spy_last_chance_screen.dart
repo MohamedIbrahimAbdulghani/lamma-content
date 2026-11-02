@@ -49,6 +49,10 @@ class _SpyLastChanceScreenState extends ConsumerState<SpyLastChanceScreen> {
   /// بنجيب الكلمة السرية الحقيقية + 3 كلمات تانية من نفس الفئة/الحزمة
   List<String> _buildWordChoices() {
     final roomState = ref.read(gameRoomProvider);
+    if (roomState.spyChoices.isNotEmpty && roomState.spyChoices.length >= 4) {
+      return List<String>.from(roomState.spyChoices);
+    }
+
     final bootstrap = ref.read(bootstrapProvider);
     final secretWord = roomState.secretWord;
     final secretCat = roomState.secretCategory;

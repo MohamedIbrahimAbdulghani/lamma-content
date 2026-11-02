@@ -58,7 +58,48 @@ lib/
 
 ---
 
-## 🚀 طريقة التشغيل للمبتدئين خطوة بخطوة
+## 🚀 طريقة التشغيل وإعدادات الـ AI (Gemini)
+
+### 📌 أين يوضع ماذا؟ (إعداد ملفات البيئة .env)
+1. **الباك إند (`backend/.env`) - المصدر الوحيد للمفتاح والموديل:**
+   ```env
+   GEMINI_API_KEY=AIzaSy...
+   GEMINI_MODEL=gemini-3.5-flash-lite
+   ```
+   *ملاحظة: الموديلات الأسرع والأكثر استقراراً حالياً هي `gemini-3.5-flash-lite` أو `gemini-flash-lite-latest`.*
+
+2. **تطبيق الفلاتر (`.env` في المجلد الرئيسي):**
+   ```env
+   # للمحاكي (Android Emulator):
+   API_BASE_URL=http://10.0.2.2:8000/api/v1
+   # للأجهزة الحقيقية عبر الواي فاي:
+   # API_BASE_URL=http://192.168.1.X:8000/api/v1
+   ```
+   *تنبيه أمني: تطبيق Flutter لا يتصل بجوجل مباشرة ولا يحوي أي مفاتيح API، بل يطلب التوليد حصراً عبر خادم Laravel.*
+
+---
+
+### ⚙️ الأوامر المطلوبة عند تعديل `.env`:
+إذا قمت بتغيير مفتاح أو موديل Gemini في `backend/.env`:
+1. مسح كاش الإعدادات في لارافيل:
+   ```powershell
+   cd backend
+   php artisan optimize:clear
+   ```
+2. فحص صلاحية المفتاح والموديلات تلقائياً عبر الأداة الذكية:
+   ```powershell
+   php artisan ai:check --test-trivia
+   ```
+3. تشغيل خادم لارافيل بعدة خيوط (Workers) لدعم التوازي وسرعة الاستجابة:
+   ```powershell
+   $env:PHP_CLI_SERVER_WORKERS=4
+   php artisan serve --host=0.0.0.0 --port=8000
+   ```
+4. **تطبيق الفلاتر:**
+   أعد تشغيل التطبيق بالكامل بالضغط على `R` في التيرمينال أو تشغيل `flutter run` من جديد، لأن الـ Hot Reload لا يعيد تحميل متغيرات الـ assets و `.env`.
+   (إذا استمر التطبيق في تذكر كاش قديم جداً، يمكنك مسح بيانات التطبيق Clear Storage من إعدادات الأندرويد).
+
+---
 
 ### 1. تشغيل الباك إند (Laravel Backend):
 افتح التيرمينال داخل مجلد `backend`:
@@ -66,21 +107,42 @@ lib/
 cd backend
 composer install
 php artisan migrate --seed
-php artisan serve --port=8081
+$env:PHP_CLI_SERVER_WORKERS=4
+php artisan serve --host=0.0.0.0 --port=8000
 ```
 
-### 2. مراجعة وتوليد الأسئلة عبر الـ Artisan:
+#### تشغيل عمال الطوابير والجدولة الذاتية (Autonomous Workers):
+النظام يعمل بنمط غير تزامني ذاتي بالكامل (`QUEUE_CONNECTION=database`):
+- لتشغيل عامل الطابور لمعالجة تعويض المخزون تلقائياً في الخلفية:
+```powershell
+php artisan queue:work --tries=3 --timeout=120
+```
+- لتشغيل المجدول الدوري (Scheduler) لفحص الأقسام الأقل مخزوناً ليلاً:
+```powershell
+php artisan schedule:work
+```
+
+### 2. إدارة المحتوى الذاتي والأدوات الذكية:
+- تجربة واختبار خط التوليد والفلترة والتدقيق التلقائي الحقيقي:
+```powershell
+php artisan ai:test-autonomous --type=trivia --count=3
+php artisan ai:test-autonomous --type=spy
+```
+- تشغيل تعويض وتجديد المخزون يدوياً:
+```powershell
+php artisan content:replenish --type=all
+```
+- عرض وفحص العناصر المعزولة تلقائياً (بسبب بلاغين من اللاعبين):
+```powershell
+php artisan content:quarantined
+```
+- فحص وتشخيص موديلات Gemini وصلاحيتها مع تجربة حية:
+```powershell
+php artisan ai:check --test-trivia
+```
 - لعرض إحصائيات الأسئلة والمحتوى:
 ```powershell
 php artisan content:stats
-```
-- لتوليد أسئلة جديدة بـ Gemini:
-```powershell
-php artisan content:generate --category=afeehat --count=5
-```
-- لمراجعة وقبول أو رفض الأسئلة المعلقة:
-```powershell
-php artisan content:review
 ```
 
 ### 3. تشغيل تطبيق الفلاتر (Flutter App):

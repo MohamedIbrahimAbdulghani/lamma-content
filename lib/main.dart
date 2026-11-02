@@ -8,6 +8,8 @@ import 'core/routes/app_router.dart';
 import 'core/theme/app_theme.dart';
 import 'data/providers/game_providers.dart';
 
+import 'data/services/game_content_service.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -38,8 +40,23 @@ class LammaApp extends StatelessWidget {
   }
 }
 
-class _LammaAppView extends StatelessWidget {
+class _LammaAppView extends ConsumerStatefulWidget {
   const _LammaAppView();
+
+  @override
+  ConsumerState<_LammaAppView> createState() => _LammaAppViewState();
+}
+
+class _LammaAppViewState extends ConsumerState<_LammaAppView> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      try {
+        ref.read(gameContentServiceProvider).prefetchStartup();
+      } catch (_) {}
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

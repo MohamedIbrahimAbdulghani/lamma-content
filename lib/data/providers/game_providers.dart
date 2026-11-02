@@ -578,7 +578,8 @@ class ActiveRoomState {
   // Spy game result fields
   final String? votedPlayerId; // اللاعب اللي اتصوت عليه
   final bool? spyGuessedCorrectly; // هل الجاسوس خمن الكلمة صح
-  final String? spyGuessedWord; // الكلمة اللي الجاسوس خمنها
+  final String? spyGuessedWord; // الكلمة اللي خمنها الجاسوس
+  final List<String> spyChoices; // خيارات الفرصة الأخيرة للجاسوس من نفس المجموعة
   final SpyGameOutcome spyOutcome; // النتيجة النهائية
 
   const ActiveRoomState({
@@ -598,6 +599,7 @@ class ActiveRoomState {
     this.isStartingRound = false,
     this.secretWord = 'خان الخليلي',
     this.secretCategory = 'أماكن',
+    this.spyChoices = const [],
     this.currentQuestion,
     this.triviaQuestions = const [],
     this.questionNumber = 1,
@@ -629,6 +631,7 @@ class ActiveRoomState {
     bool? isStartingRound,
     String? secretWord,
     String? secretCategory,
+    List<String>? spyChoices,
     QuestionModel? currentQuestion,
     List<QuestionModel>? triviaQuestions,
     int? questionNumber,
@@ -659,6 +662,7 @@ class ActiveRoomState {
       isStartingRound: isStartingRound ?? this.isStartingRound,
       secretWord: secretWord ?? this.secretWord,
       secretCategory: secretCategory ?? this.secretCategory,
+      spyChoices: spyChoices ?? this.spyChoices,
       currentQuestion: currentQuestion ?? this.currentQuestion,
       triviaQuestions: triviaQuestions ?? this.triviaQuestions,
       questionNumber: questionNumber ?? this.questionNumber,
@@ -753,7 +757,24 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       categoryTitle = 'أكلات';
     }
 
-    if (_ref != null) {
+    List<String> spyChoices = [];
+
+    if (_ref != null && state.roomCode.isNotEmpty) {
+      try {
+        final api = _ref.read(apiClientProvider);
+        final spyData = await api.fetchNextSpyRound(
+          state.roomCode,
+          pack: packSlug,
+        );
+        if (spyData != null && spyData['secret_word'] != null) {
+          pickedWord = spyData['secret_word'] as String;
+          categoryTitle = spyData['group_title_ar'] as String? ?? categoryTitle;
+          spyChoices = (spyData['spy_choices'] as List<dynamic>? ?? []).map((e) => e.toString()).toList();
+        }
+      } catch (_) {}
+    }
+
+    if (pickedWord == null && _ref != null) {
       try {
         final contentService = _ref.read(gameContentServiceProvider);
         pickedWord = await contentService.getNextSpyWord(
@@ -873,6 +894,7 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       previousSpyIds: chosenSpyIds,
       secretWord: pickedWord,
       secretCategory: categoryTitle,
+      spyChoices: spyChoices,
       spyPlayerIds: chosenSpyIds,
       players: updatedPlayers,
       votedPlayerId: null,
@@ -888,6 +910,7 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       categoryName: categoryTitle,
       discussionMinutes: _ref?.read(spySettingsProvider).discussionMinutes ?? 5,
       spyPlayerIds: chosenSpyIds,
+      spyChoices: spyChoices,
       currentRound: nextRoundNumber,
       totalRounds: targetTotalRounds,
     );
@@ -960,6 +983,12 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
           .toList();
     }
 
+    List<String> netSpyChoices = state.spyChoices;
+    if (data['spy_choices'] != null) {
+      final rawChoices = data['spy_choices'] as List<dynamic>? ?? [];
+      netSpyChoices = rawChoices.map((e) => e.toString()).toList();
+    }
+
     state = state.copyWith(
       roomCode: data['room_code'] as String? ?? state.roomCode,
       selectedGame: netGame ?? state.selectedGame,
@@ -967,7 +996,9 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       currentPhase: data['current_phase'] as String? ?? state.currentPhase,
       timerSeconds: data['timer_seconds'] as int? ?? 0,
       players: playersList,
+      secretWord: data['secret_word'] as String? ?? state.secretWord,
       secretCategory: data['secret_category'] as String? ?? '',
+      spyChoices: netSpyChoices,
       currentRound: data['current_round'] as int? ?? state.currentRound,
       totalRounds: data['total_rounds'] as int? ?? state.totalRounds,
       currentQuestion: q,

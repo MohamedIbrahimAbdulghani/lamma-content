@@ -12,6 +12,7 @@ import 'package:lamma_party_game_app/data/providers/game_providers.dart';
 import 'package:lamma_party_game_app/data/services/ai_question_service.dart';
 import 'package:lamma_party_game_app/data/services/game_content_service.dart';
 import 'package:lamma_party_game_app/data/storage/local_storage.dart';
+import 'package:dio/dio.dart';
 import 'package:lamma_party_game_app/features/charades/controllers/charades_controller.dart';
 import 'package:lamma_party_game_app/features/settings/settings_screen.dart';
 
@@ -23,6 +24,8 @@ class FailingAiService extends AiQuestionService {
     String? specificTopic,
     List<String> avoidWords = const [],
     int maxRetries = 3,
+    CancelToken? cancelToken,
+    void Function(List<String> batch)? onBatchReceived,
   }) async {
     throw const AiNoInternetException();
   }
@@ -36,6 +39,8 @@ class FailingAiService extends AiQuestionService {
     String? specificTopic,
     List<String> avoidTopics = const [],
     int maxRetries = 3,
+    CancelToken? cancelToken,
+    void Function(List<QuestionModel> batch)? onBatchReceived,
   }) async {
     throw const AiNoInternetException();
   }
@@ -47,6 +52,8 @@ class FailingAiService extends AiQuestionService {
     String? specificTopic,
     List<String> avoidWords = const [],
     int maxRetries = 3,
+    CancelToken? cancelToken,
+    void Function(List<String> batch)? onBatchReceived,
   }) async {
     throw const AiNoInternetException();
   }
@@ -60,6 +67,8 @@ class HangingAiService extends AiQuestionService {
     String? specificTopic,
     List<String> avoidWords = const [],
     int maxRetries = 3,
+    CancelToken? cancelToken,
+    void Function(List<String> batch)? onBatchReceived,
   }) async {
     await Future.delayed(const Duration(seconds: 10));
     return ['كلمة_متأخرة'];
@@ -74,6 +83,8 @@ class HangingAiService extends AiQuestionService {
     String? specificTopic,
     List<String> avoidTopics = const [],
     int maxRetries = 3,
+    CancelToken? cancelToken,
+    void Function(List<QuestionModel> batch)? onBatchReceived,
   }) async {
     await Future.delayed(const Duration(seconds: 10));
     return [];

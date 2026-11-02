@@ -3,6 +3,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Exceptions\AiServiceException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\GenerateContentApiRequest;
 use App\Http\Resources\AiContentResource;
@@ -24,22 +25,49 @@ class ContentGenerationController extends Controller
         $count = (int) ($request->validated('count') ?? 20);
         $excludeItems = (array) ($request->validated('exclude_items') ?? []);
 
-        // هنا بنطلب توليد المحتوى من خدمة الذكاء الاصطناعي مع تمرير الإعدادات المحددة
-        $items = $this->aiContentService->generate(
-            gameType: $gameType,
-            category: $category,
-            count: $count,
-            excludeItems: $excludeItems,
-            difficulty: $difficulty,
-            categories: $categories,
-        );
+        try {
+            $items = $this->aiContentService->generate(
+                gameType: $gameType,
+                category: $category,
+                count: $count,
+                excludeItems: $excludeItems,
+                difficulty: $difficulty,
+                categories: $categories,
+            );
 
-        return response()->json([
-            'success' => true,
-            'game_type' => $gameType,
-            'count' => count($items),
-            'data' => AiContentResource::collection($items),
-        ]);
+            return response()->json([
+                'success' => true,
+                'game_type' => $gameType,
+                'count' => count($items),
+                'data' => AiContentResource::collection($items),
+            ]);
+        } catch (AiServiceException $e) {
+            $response = [
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error_code' => $e->getErrorCode(),
+            ];
+
+            if (config('app.debug')) {
+                $response['debug_info'] = $e->getDebugInfo();
+            }
+
+            return response()->json($response, $e->getStatusCode());
+        } catch (\Throwable $e) {
+            $response = [
+                'success' => false,
+                'message' => 'حدث خطأ غير متوقع أثناء توليد المحتوى.',
+                'error_code' => 'INTERNAL_ERROR',
+            ];
+
+            if (config('app.debug')) {
+                $response['debug_info'] = [
+                    'source' => 'Backend',
+                    'details' => $e->getMessage(),
+                ];
+            }
+
+            return response()->json($response, 500);
+        }
     }
 }
-

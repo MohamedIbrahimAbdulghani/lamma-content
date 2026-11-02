@@ -102,6 +102,86 @@ class ArabicTextNormalizer {
     return hashText(word);
   }
 
+  /// بصمة مملحة للإجابة الصحيحة للتحقق الأوفلاين السري دون كشف رقم الإجابة
+  static String saltedAnswerHash(int questionId, String answer, {String salt = 'LammaSecretSalt2025'}) {
+    final normAnswer = normalize(answer);
+    final combined = '$questionId::$normAnswer::$salt';
+    return sha256.convert(utf8.encode(combined)).toString();
+  }
+
+  // ==========================================
+  // فحص التشابه العالي والصياغات المترادفة (Fuzzy Similarity)
+  // ==========================================
+
+  // كلمات التوقف الشائعة في العامية والفصحى التي لا تؤثر على جوهر السؤال
+  static const Set<String> _stopWords = {
+    'في', 'من', 'على', 'عن', 'الى', 'الي', 'هو', 'هي', 'هم', 'هن',
+    'ده', 'دي', 'دول', 'مين', 'ايه', 'كام', 'اين', 'متي', 'كيف', 'ما',
+    'ماذا', 'هل', 'ان', 'مع', 'كل', 'يا', 'لا', 'لم', 'لن', 'لو', 'او',
+    'ثم', 'بين', 'عند', 'كان', 'كانت', 'يكون', 'تكون', 'اللي', 'الذي', 'التي',
+  };
+
+  /// استخراج الكلمات الدلالية الأساسية بعد التطبيع وحذف كلمات التوقف
+  static Set<String> tokenize(String text) {
+    final norm = normalize(text);
+    if (norm.isEmpty) return const {};
+
+    final words = norm.split(' ').where((w) => w.length > 1).toList();
+    final meaningful = words.where((w) => !_stopWords.contains(w)).toSet();
+
+    // إذا كانت الجملة قصيرة جداً وأصبحت فارغة، نعتمد كل الكلمات المطبّعة
+    return meaningful.isNotEmpty ? meaningful : words.toSet();
+  }
+
+  /// حساب معامل تشابه جكارد (Jaccard Similarity) بين نصين (0.0 إلى 1.0)
+  static double jaccardSimilarity(String a, String b) {
+    if (areEqual(a, b)) return 1.0;
+
+    final tokensA = tokenize(a);
+    final tokensB = tokenize(b);
+
+    if (tokensA.isEmpty || tokensB.isEmpty) return 0.0;
+
+    final intersection = tokensA.intersection(tokensB).length;
+    final union = tokensA.union(tokensB).length;
+
+    if (union == 0) return 0.0;
+    return intersection / union;
+  }
+
+  /// التحقق من التشابه العالي بين نصين مع عتبة قابلة للضبط (افتراضياً 70%)
+  static bool isSimilar(String a, String b, {double threshold = 0.70}) {
+    if (areEqual(a, b)) return true;
+    return jaccardSimilarity(a, b) >= threshold;
+  }
+
+  /// التحقق مما إذا كان النص مرادفاً أو مشابهاً بنسبة عالية لأي نص في قائمة سابقة
+  static bool hasHighSimilarity(
+    Iterable<String> existingTexts,
+    String candidate, {
+    double threshold = 0.70,
+  }) {
+    final candidateTokens = tokenize(candidate);
+    if (candidateTokens.isEmpty) return false;
+
+    final candidateNorm = normalize(candidate);
+
+    for (final existing in existingTexts) {
+      if (normalize(existing) == candidateNorm) return true;
+
+      final existingTokens = tokenize(existing);
+      if (existingTokens.isEmpty) continue;
+
+      final intersection = candidateTokens.intersection(existingTokens).length;
+      final union = candidateTokens.union(existingTokens).length;
+
+      if (union > 0 && (intersection / union) >= threshold) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// حساب بصمات قائمة من النصوص دفعة واحدة في isolate منفصل
   static Future<List<String>> computeHashesInBackground(List<String> texts) {
     if (texts.isEmpty) return Future.value([]);
@@ -115,3 +195,4 @@ class ArabicTextNormalizer {
     return texts.map(hashText).toList();
   }
 }
+

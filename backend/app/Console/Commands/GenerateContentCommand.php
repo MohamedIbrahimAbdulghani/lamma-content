@@ -20,8 +20,8 @@ class GenerateContentCommand extends Command
 
     public function handle(): int
     {
-        $apiKey = env('GEMINI_API_KEY');
-        $model = env('GEMINI_MODEL', 'gemini-2.0-flash');
+        $apiKey = config('services.gemini.key');
+        $model = config('services.gemini.model', 'gemini-3.5-flash-lite');
 
         if (empty($apiKey)) {
             $this->warn('مفتاح GEMINI_API_KEY غير موجود في ملف .env. يمكنك إضافة المفتاح لاحقاً لتوليد أسئلة بالذكاء الاصطناعي.');

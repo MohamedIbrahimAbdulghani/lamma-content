@@ -9,4 +9,5 @@ Artisan::command('inspire', function () {
 
 use Illuminate\Support\Facades\Schedule;
 
-Schedule::command('content:generate --count=10')->daily();
+Schedule::command('content:replenish --type=all')->dailyAt('03:00');
+

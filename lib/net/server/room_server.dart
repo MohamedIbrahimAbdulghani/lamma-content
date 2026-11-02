@@ -39,6 +39,7 @@ class RoomServer {
   int _currentTriviaIndex = 0;
   String _secretWord = '';
   String _secretCategory = '';
+  List<String> _spyChoices = [];
   List<String> _spyPlayerIds = [];
   int _currentRound = 1;
   int _totalRounds = 3;
@@ -60,8 +61,12 @@ class RoomServer {
     required this.onStateChanged,
     required this.onStrikeToast,
   }) {
-    // نتأكد إن المضيف مسجل كمضيف أول
+    // نتأكد إن المضيف مسجل كمضيف أول مع تهيئة مجموعات بصماته
     _players.add(hostPlayer.copyWith(isHost: true));
+    _playerSeenTriviaPrompts[hostPlayer.id] = <String>{};
+    _playerSeenTriviaAnswers[hostPlayer.id] = <String>{};
+    _playerSeenSpyWords[hostPlayer.id] = <String>{};
+    _playerSeenCharadesWords[hostPlayer.id] = <String>{};
   }
 
   List<PlayerModel> get players => List.unmodifiable(_players);
@@ -100,6 +105,40 @@ class RoomServer {
     }
     return all;
   }
+
+  void setHostSeenHashes({
+    Set<String> triviaPrompts = const {},
+    Set<String> triviaAnswers = const {},
+    Set<String> spyWords = const {},
+    Set<String> charadesWords = const {},
+  }) {
+    _playerSeenTriviaPrompts[hostPlayer.id] = Set.from(triviaPrompts);
+    _playerSeenTriviaAnswers[hostPlayer.id] = Set.from(triviaAnswers);
+    _playerSeenSpyWords[hostPlayer.id] = Set.from(spyWords);
+    _playerSeenCharadesWords[hostPlayer.id] = Set.from(charadesWords);
+  }
+
+  void recordSeenTriviaAcrossRoom(List<String> promptHashes, List<String> answerHashes) {
+    for (final set in _playerSeenTriviaPrompts.values) {
+      set.addAll(promptHashes);
+    }
+    for (final set in _playerSeenTriviaAnswers.values) {
+      set.addAll(answerHashes);
+    }
+  }
+
+  void recordSeenSpyAcrossRoom(String wordHash) {
+    for (final set in _playerSeenSpyWords.values) {
+      set.add(wordHash);
+    }
+  }
+
+  void recordSeenCharadesAcrossRoom(List<String> hashes) {
+    for (final set in _playerSeenCharadesWords.values) {
+      set.addAll(hashes);
+    }
+  }
+
 
   Future<void> start() async {
     try {
@@ -443,11 +482,13 @@ class RoomServer {
     required String categoryName,
     required int discussionMinutes,
     List<String>? spyPlayerIds,
+    List<String>? spyChoices,
     int? currentRound,
     int? totalRounds,
   }) {
     _secretWord = secretWord;
     _secretCategory = categoryName;
+    _spyChoices = spyChoices ?? [];
 
     // تسجيل بصمة الكلمة في سجلات جميع اللاعبين الحاضرين
     final spyWordHash = ArabicTextNormalizer.wordHash(secretWord);
@@ -572,7 +613,7 @@ class RoomServer {
     for (int i = 0; i < _players.length; i++) {
       final p = _players[i];
       final answer = _answers[p.id];
-      final isCorrect = (answer == currentQ.correctIndex);
+      final isCorrect = currentQ.isOptionCorrect(answer ?? -1);
       final remaining = _answerTimes[p.id] ?? _timerSeconds;
       final roundScore = TriviaScorer.calculateFromSettings(
         isCorrect: isCorrect,
@@ -623,6 +664,8 @@ class RoomServer {
   }
 
   void _broadcastState() {
+    final isRevealPhase = _currentPhase == 'trivia_reveal' || _currentPhase == 'trivia_leaderboard';
+
     final hostStateMap = {
       'room_code': roomCode,
       'game_mode': _gameMode,
@@ -631,13 +674,15 @@ class RoomServer {
       'players': _players.map((p) => p.toJson()).toList(),
       'secret_word': _secretWord,
       'secret_category': _secretCategory,
+      'spy_choices': _spyChoices,
       'settings': _gameSettings,
       'current_round': _currentRound,
       'total_rounds': _totalRounds,
-      'trivia_questions': _triviaQuestions.map((q) => q.toJson()).toList(),
       'time_per_question': _triviaTimePerQuestion,
       if (_currentPhase == 'trivia_question' && _triviaQuestions.isNotEmpty)
-        'current_question': _triviaQuestions[_currentTriviaIndex].toJson(),
+        'current_question': _triviaQuestions[_currentTriviaIndex].toJson(reveal: false)
+      else if (isRevealPhase && _triviaQuestions.isNotEmpty)
+        'current_question': _triviaQuestions[_currentTriviaIndex].toJson(reveal: true),
       'question_number': _currentTriviaIndex + 1,
       'total_questions': _triviaQuestions.length,
     };
@@ -671,13 +716,15 @@ class RoomServer {
         'players': clientPlayers,
         'secret_word': (isSpyGameBeforeResult && isClientSpy) ? '' : _secretWord,
         'secret_category': _secretCategory,
+        'spy_choices': _spyChoices,
         'settings': _gameSettings,
         'current_round': _currentRound,
         'total_rounds': _totalRounds,
-        'trivia_questions': _triviaQuestions.map((q) => q.toJson()).toList(),
         'time_per_question': _triviaTimePerQuestion,
         if (_currentPhase == 'trivia_question' && _triviaQuestions.isNotEmpty)
-          'current_question': _triviaQuestions[_currentTriviaIndex].toJson(),
+          'current_question': _triviaQuestions[_currentTriviaIndex].toJson(reveal: false)
+        else if (isRevealPhase && _triviaQuestions.isNotEmpty)
+          'current_question': _triviaQuestions[_currentTriviaIndex].toJson(reveal: true),
         'question_number': _currentTriviaIndex + 1,
         'total_questions': _triviaQuestions.length,
       };

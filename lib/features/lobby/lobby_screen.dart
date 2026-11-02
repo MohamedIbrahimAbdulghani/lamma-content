@@ -13,6 +13,7 @@ import '../../data/providers/game_providers.dart';
 import '../../data/services/game_content_service.dart';
 import '../charades/controllers/charades_controller.dart';
 import '../trivia/presentation/controllers/trivia_controller.dart';
+import 'ai_generation_sheet.dart';
 
 class LobbyScreen extends ConsumerStatefulWidget {
   const LobbyScreen({super.key});
@@ -23,6 +24,17 @@ class LobbyScreen extends ConsumerStatefulWidget {
 
 class _LobbyScreenState extends ConsumerState<LobbyScreen> {
   bool _isStarting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      try {
+        final currentGame = ref.read(selectedGame);
+        ref.read(gameContentServiceProvider).prefetchLobby(currentGame.name);
+      } catch (_) {}
+    });
+  }
 
   Future<void> _handleStartGame(GameType currentGame) async {
     if (_isStarting) return;
@@ -86,6 +98,7 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
             categories: triviaSettings.categories,
             difficulty: triviaSettings.difficulty,
             bootstrapData: bootstrap.data,
+            roomCode: roomServer?.roomCode ?? ref.read(roomProvider).roomCode,
             externalSeenPromptHashes: roomServer?.getAllSeenTriviaPromptHashes(),
             externalSeenAnswerHashes: roomServer?.getAllSeenTriviaAnswerHashes(),
           ).timeout(
@@ -511,6 +524,14 @@ class _LobbyScreenState extends ConsumerState<LobbyScreen> {
               // Bottom Actions
               const SizedBox(height: 12),
               if (isHost) ...[
+                SecondaryButton(
+                  title: 'تحديث ومزامنة المحتوى الذكي ⚡',
+                  icon: Icons.sync,
+                  borderColor: AppTheme.accentMint,
+                  textColor: AppTheme.accentMint,
+                  onPressed: () => showAiGenerationSheet(context, gameType: currentGame.name),
+                ),
+                const SizedBox(height: 10),
                 SecondaryButton(
                   title: 'إعدادات اللعبة',
                   icon: Icons.tune,

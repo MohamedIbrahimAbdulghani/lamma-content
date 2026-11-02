@@ -1,6 +1,7 @@
 // Lamma - by Mohamed Ibrahim
 
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/arabic_text_normalizer.dart';
 import '../api/api_client.dart';
@@ -821,15 +822,196 @@ class GameContentService {
     this._api,
     this._storage, {
     AiQuestionService? ai,
-  }) : _ai = ai ?? AiQuestionService();
+  }) : _ai = ai ?? AiQuestionService(storage: _storage);
 
   List<QuestionModel> get triviaBuffer => List.unmodifiable(_triviaBuffer);
   List<String> get spyBuffer => List.unmodifiable(_spyBuffer);
   List<String> get charadesBuffer => List.unmodifiable(_charadesBuffer);
 
+  String _safeAnswerHash(QuestionModel q) {
+    final opt = (q.correctIndex >= 0 && q.correctIndex < q.options.length)
+        ? q.options[q.correctIndex]
+        : (q.saltedHash ?? '');
+    return ArabicTextNormalizer.triviaAnswerHash(q.categorySlug, opt);
+  }
+
+  /// عدد العناصر الجاهزة في المخزون المؤقت المطابقة للمعايير وغير المشاهدة
+  int getStockCount(String gameType, {String? category, String? difficulty}) {
+    if (gameType == 'trivia') {
+      final seenPrompts = _storage.getSeenTriviaPromptHashes();
+      final seenAnswers = _storage.getSeenTriviaAnswerHashes();
+      return _triviaBuffer.where((q) {
+        if (category != null && category != 'all' && q.categorySlug != category) return false;
+        if (difficulty != null && difficulty != 'all' && q.difficulty != difficulty) return false;
+        final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
+        final aHash = _safeAnswerHash(q);
+        return !seenPrompts.contains(pHash) && !seenAnswers.contains(aHash);
+      }).length;
+    } else if (gameType == 'spy') {
+      final seenHashes = _storage.getSeenSpyHashes();
+      return _spyBuffer.where((w) {
+        final h = ArabicTextNormalizer.wordHash(w);
+        return !seenHashes.contains(h);
+      }).length;
+    } else {
+      final seenHashes = _storage.getSeenCharadesHashes();
+      return _charadesBuffer.where((w) {
+        final h = ArabicTextNormalizer.wordHash(w);
+        return !seenHashes.contains(h);
+      }).length;
+    }
+  }
+
+  /// استهلاك فوري للأسئلة الجاهزة في المخزون المسبق
+  List<QuestionModel> takeStockTrivia({
+    required int count,
+    String? category,
+    String? difficulty,
+    Set<String>? externalSeenPromptHashes,
+    Set<String>? externalSeenAnswerHashes,
+  }) {
+    final localSeenPrompts = _storage.getSeenTriviaPromptHashes();
+    final localSeenAnswers = _storage.getSeenTriviaAnswerHashes();
+    final allSeenPrompts = {...localSeenPrompts, ...?externalSeenPromptHashes};
+    final allSeenAnswers = {...localSeenAnswers, ...?externalSeenAnswerHashes};
+
+    final taken = <QuestionModel>[];
+    final remaining = <QuestionModel>[];
+
+    for (final q in _triviaBuffer) {
+      if (taken.length < count) {
+        if (category != null && category != 'all' && q.categorySlug != category) {
+          remaining.add(q);
+          continue;
+        }
+        if (difficulty != null && difficulty != 'all' && q.difficulty != difficulty) {
+          remaining.add(q);
+          continue;
+        }
+        final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
+        final aHash = _safeAnswerHash(q);
+        if (!allSeenPrompts.contains(pHash) &&
+            !allSeenAnswers.contains(aHash) &&
+            !taken.any((t) => ArabicTextNormalizer.isSimilar(t.promptAr, q.promptAr, threshold: 0.70))) {
+          taken.add(q);
+          continue;
+        }
+      }
+      remaining.add(q);
+    }
+
+    _triviaBuffer.clear();
+    _triviaBuffer.addAll(remaining);
+
+    if (_triviaBuffer.length <= 6) {
+      final cats = category != null && category != 'all' ? [category] : <String>[];
+      _triggerPrefetchTrivia(cats, difficulty);
+    }
+
+    return taken;
+  }
+
+  /// استهلاك فوري لكلمات الجاسوس أو التمثيل من المخزون المسبق
+  List<String> takeStockWords(
+    String gameType, {
+    required int count,
+    String? category,
+    Set<String>? externalSeenHashes,
+  }) {
+    final isSpy = gameType == 'spy';
+    final buffer = isSpy ? _spyBuffer : _charadesBuffer;
+    final localSeen = isSpy ? _storage.getSeenSpyHashes() : _storage.getSeenCharadesHashes();
+    final allSeen = {...localSeen, ...?externalSeenHashes};
+
+    final taken = <String>[];
+    final remaining = <String>[];
+
+    for (final w in buffer) {
+      if (taken.length < count) {
+        final h = ArabicTextNormalizer.wordHash(w);
+        if (!allSeen.contains(h) &&
+            !taken.any((t) => ArabicTextNormalizer.isSimilar(t, w, threshold: 0.75))) {
+          taken.add(w);
+          continue;
+        }
+      }
+      remaining.add(w);
+    }
+
+    buffer.clear();
+    buffer.addAll(remaining);
+
+    if (buffer.length <= 6) {
+      if (isSpy) {
+        _triggerPrefetchSpy(category ?? 'places', null, allSeen);
+      } else {
+        _triggerPrefetchCharades(category ?? 'movies', allSeen);
+      }
+    }
+
+    return taken;
+  }
+
+  /// التجديد التلقائي للمخزون المسبق عند فتح التطبيق
+  Future<void> prefetchStartup() async {
+    Future.microtask(() async {
+      try {
+        final triviaSettings = _storage.getSavedTriviaSettings();
+        final cats = (triviaSettings?['categories'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? ['movies', 'sports'];
+        final diff = (triviaSettings?['difficulty'] as String?) ?? 'all';
+        if (_triviaBuffer.length < 15) {
+          _triggerPrefetchTrivia(cats, diff);
+        }
+
+        final spySettings = _storage.getSavedSpySettings();
+        final pack = (spySettings?['wordPack'] as String?) ?? 'places';
+        if (_spyBuffer.length < 15) {
+          _triggerPrefetchSpy(pack, null);
+        }
+
+        final charadesSettings = _storage.getSavedCharadesSettings();
+        final charCat = (charadesSettings?['category'] as String?) ?? 'movies';
+        if (_charadesBuffer.length < 15) {
+          _triggerPrefetchCharades(charCat);
+        }
+      } catch (_) {}
+    });
+  }
+
+  /// التجديد التلقائي للمخزون المسبق عند دخول اللوبي
+  Future<void> prefetchLobby(
+    String gameType, {
+    Map<String, dynamic>? settings,
+    Set<String>? externalSeenHashes,
+  }) async {
+    Future.microtask(() async {
+      try {
+        if (gameType == 'trivia') {
+          if (_triviaBuffer.length <= 10) {
+            final cats = (settings?['categories'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+            final diff = (settings?['difficulty'] as String?) ?? 'all';
+            _triggerPrefetchTrivia(cats, diff);
+          }
+        } else if (gameType == 'spy') {
+          if (_spyBuffer.length <= 10) {
+            final pack = (settings?['wordPack'] as String?) ?? 'places';
+            _triggerPrefetchSpy(pack, null, externalSeenHashes);
+          }
+        } else if (gameType == 'charades') {
+          if (_charadesBuffer.length <= 10) {
+            final cat = (settings?['category'] as String?) ?? 'movies';
+            _triggerPrefetchCharades(cat, externalSeenHashes);
+          }
+        }
+      } catch (_) {}
+    });
+  }
+
   void addGeneratedTriviaQuestions(List<QuestionModel> questions) {
     for (final q in questions) {
-      if (!_triviaBuffer.any((b) => ArabicTextNormalizer.areEqual(b.promptAr, q.promptAr))) {
+      if (!_triviaBuffer.any((b) =>
+          ArabicTextNormalizer.areEqual(b.promptAr, q.promptAr) ||
+          ArabicTextNormalizer.isSimilar(b.promptAr, q.promptAr, threshold: 0.70))) {
         _triviaBuffer.add(q);
       }
     }
@@ -837,7 +1019,9 @@ class GameContentService {
 
   void addGeneratedSpyWords(List<String> words) {
     for (final w in words) {
-      if (!_spyBuffer.any((b) => ArabicTextNormalizer.areEqual(b, w))) {
+      if (!_spyBuffer.any((b) =>
+          ArabicTextNormalizer.areEqual(b, w) ||
+          ArabicTextNormalizer.isSimilar(b, w, threshold: 0.75))) {
         _spyBuffer.add(w);
       }
     }
@@ -845,11 +1029,14 @@ class GameContentService {
 
   void addGeneratedCharadesWords(List<String> words) {
     for (final w in words) {
-      if (!_charadesBuffer.any((b) => ArabicTextNormalizer.areEqual(b, w))) {
+      if (!_charadesBuffer.any((b) =>
+          ArabicTextNormalizer.areEqual(b, w) ||
+          ArabicTextNormalizer.isSimilar(b, w, threshold: 0.75))) {
         _charadesBuffer.add(w);
       }
     }
   }
+
 
   // ==========================================
   // 1. مين الجاسوس (SPY GAME)
@@ -884,15 +1071,18 @@ class GameContentService {
       return picked;
     }
 
-    // 4. محاولة التوليد المباشر بالذكاء الاصطناعي مع مهلة 4 ثوانٍ
+    // 4. محاولة التوليد عبر Backend Proxy مع مهلة 5 ثوانٍ
     try {
-      final aiWords = await _ai.generateSpyWords(
-        count: 15,
+      final rawItems = await _api.generateAiContent(
+        gameType: 'spy',
         category: packSlug,
-        avoidWords: localSeen.take(30).toList(),
-      ).timeout(const Duration(seconds: 4));
+        count: 15,
+        excludeItems: localSeen.take(30).toList(),
+      ).timeout(const Duration(seconds: 5));
 
-      for (final w in aiWords) {
+      for (final item in rawItems) {
+        final w = (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString().trim();
+        if (w.isEmpty) continue;
         final h = ArabicTextNormalizer.wordHash(w);
         if (!allSeen.contains(h) && !_spyBuffer.any((b) => ArabicTextNormalizer.areEqual(b, w))) {
           _spyBuffer.add(w);
@@ -1005,6 +1195,7 @@ class GameContentService {
     String difficulty = 'all',
     BootstrapData? bootstrapData,
     bool allowAi = true,
+    String? roomCode,
     Set<String>? externalSeenPromptHashes,
     Set<String>? externalSeenAnswerHashes,
   }) async {
@@ -1038,33 +1229,61 @@ class GameContentService {
     bool isAllowed(QuestionModel q, List<QuestionModel> currentResult) {
       if (!matchesCategory(q.categorySlug) || !matchesDifficulty(q.difficulty)) return false;
       final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
-      final aHash = ArabicTextNormalizer.triviaAnswerHash(q.categorySlug, q.options[q.correctIndex]);
+      final aHash = _safeAnswerHash(q);
 
       if (allSeenPrompts.contains(pHash) || allSeenAnswers.contains(aHash)) return false;
       if (q.id > 0 && seenIds.contains(q.id)) return false;
 
       if (currentResult.any((r) {
         final rpHash = ArabicTextNormalizer.triviaQuestionHash(r.promptAr);
-        final raHash = ArabicTextNormalizer.triviaAnswerHash(r.categorySlug, r.options[r.correctIndex]);
-        return rpHash == pHash || raHash == aHash;
+        final raHash = _safeAnswerHash(r);
+        if (rpHash == pHash || raHash == aHash) return true;
+        return ArabicTextNormalizer.isSimilar(r.promptAr, q.promptAr, threshold: 0.70);
       })) {
         return false;
       }
       return true;
     }
 
+    final result = <QuestionModel>[];
+
+    // جلب من خادم الجلسة المركزي للغرفة أولاً (استبعاد تلقائي لما رآه أي حاضر)
+    if (roomCode != null && roomCode.isNotEmpty && allowAi) {
+      try {
+        final catParam = targetCategories.isNotEmpty && !targetCategories.contains('all')
+            ? targetCategories.join(',')
+            : null;
+        int attempts = 0;
+        while (result.length < count && attempts < count + 2) {
+          attempts++;
+          final q = await _api.fetchNextRoomQuestion(
+            roomCode,
+            categories: catParam,
+            difficulty: difficulty != 'all' ? difficulty : null,
+          );
+          if (q == null) break;
+          if (isAllowed(q, result)) {
+            result.add(q);
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (result.length >= count) {
+      await _recordSeenTrivia(result);
+      return result.take(count).toList();
+    }
+
     // 1. تنقية البافر
     _triviaBuffer.removeWhere((q) {
       final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
-      final aHash = ArabicTextNormalizer.triviaAnswerHash(q.categorySlug, q.options[q.correctIndex]);
+      final aHash = _safeAnswerHash(q);
       return allSeenPrompts.contains(pHash) || allSeenAnswers.contains(aHash) || (q.id > 0 && seenIds.contains(q.id));
     });
 
     if (_triviaBuffer.length <= 5 && allowAi) {
       _triggerPrefetchTrivia(targetCategories, difficulty);
     }
-
-    final result = <QuestionModel>[];
 
     // 2. أخذ من البافر فقط ما يطابق الأقسام والصعوبة المختارة حصراً
     final remainingBuffer = <QuestionModel>[];
@@ -1144,18 +1363,6 @@ class GameContentService {
               }
             }
           } catch (_) {}
-
-          // إذا لم ينتج عن ApiClient نتائج، نطلب مباشرة عبر خدمة الذكاء الاصطناعي (Gemini) مع مهلة 4 ثوانٍ
-          if (aiQuestions.isEmpty) {
-            aiQuestions = await _ai.generateTriviaQuestions(
-              count: batchCount,
-              categories: targetCategories.isNotEmpty && !targetCategories.contains('all')
-                  ? targetCategories
-                  : null,
-              difficulty: difficulty != 'all' ? difficulty : null,
-              avoidTopics: result.map((r) => r.promptAr).take(20).toList(),
-            ).timeout(const Duration(seconds: 4));
-          }
 
           for (final q in aiQuestions) {
             if (isAllowed(q, result)) {
@@ -1274,11 +1481,38 @@ class GameContentService {
     Future.microtask(() async {
       try {
         final seen = _storage.getSeenTriviaPromptHashes();
-        final aiQuestions = await _ai.generateTriviaQuestions(
-          count: 15,
+        final rawItems = await _api.generateAiContent(
+          gameType: 'trivia',
           categories: targetCategories.isNotEmpty && !targetCategories.contains('all') ? targetCategories : null,
           difficulty: difficulty != 'all' ? difficulty : null,
+          count: 15,
         );
+
+        final aiQuestions = <QuestionModel>[];
+        for (int i = 0; i < rawItems.length; i++) {
+          final item = rawItems[i];
+          final prompt = (item['prompt_ar'] ?? item['prompt']) as String?;
+          final optionsRaw = item['options'] as List<dynamic>?;
+          final options = optionsRaw?.map((e) => e.toString().trim()).toList();
+          final correctIndex = int.tryParse(item['correct_index']?.toString() ?? '0') ?? 0;
+          final itemCat = (item['category_slug'] ?? item['category'] ?? 'general').toString();
+          final itemDiff = (item['difficulty'] ?? 'medium').toString();
+
+          if (prompt != null && prompt.trim().length >= 5 && options != null && options.length == 4) {
+            aiQuestions.add(QuestionModel(
+              id: -1 * (DateTime.now().millisecondsSinceEpoch % 1000000 + i + 1),
+              categoryId: 1,
+              categorySlug: itemCat,
+              type: 'mcq',
+              promptAr: prompt.trim(),
+              options: options,
+              correctIndex: correctIndex,
+              difficulty: itemDiff,
+              explanationAr: item['explanation_ar'] as String?,
+              source: 'backend_ai',
+            ));
+          }
+        }
 
         for (final q in aiQuestions) {
           final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
@@ -1295,7 +1529,7 @@ class GameContentService {
 
   Future<void> _recordSeenTrivia(List<QuestionModel> questions) async {
     final promptHashes = questions.map((q) => ArabicTextNormalizer.triviaQuestionHash(q.promptAr)).toList();
-    final answerHashes = questions.map((q) => ArabicTextNormalizer.triviaAnswerHash(q.categorySlug, q.options[q.correctIndex])).toList();
+    final answerHashes = questions.map((q) => _safeAnswerHash(q)).toList();
     final prompts = questions.map((q) => q.promptAr).toList();
     final ids = questions.where((q) => q.id > 0).map((q) => q.id).toList();
 
@@ -1451,13 +1685,19 @@ class GameContentService {
       return result;
     }
 
-    // 4. توليد بالذكاء الاصطناعي لو لسه العدد ناقص مع مهلة 4 ثوانٍ
+    // 4. توليد بالذكاء الاصطناعي عبر Backend Proxy لو لسه العدد ناقص مع مهلة 4 ثوانٍ
     try {
-      final aiWords = await _ai.generateCharadesWords(
-        count: (count - result.length) + 10,
+      final rawItems = await _api.generateAiContent(
+        gameType: 'charades',
         category: cat,
-        avoidWords: localSeen.take(30).toList(),
+        count: (count - result.length) + 10,
+        excludeItems: localSeen.take(30).toList(),
       ).timeout(const Duration(seconds: 4));
+
+      final aiWords = rawItems
+          .map((item) => (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString())
+          .where((w) => w.trim().isNotEmpty)
+          .toList();
 
       for (final word in aiWords) {
         final trimmed = word.trim();
@@ -1548,11 +1788,17 @@ class GameContentService {
       try {
         final cat = normalizeCharadesCategory(category);
         final seen = seenHashes ?? _storage.getSeenCharadesHashes();
-        final aiWords = await _ai.generateCharadesWords(
-          count: 20,
+        final rawItems = await _api.generateAiContent(
+          gameType: 'charades',
           category: cat,
-          avoidWords: seen.take(30).toList(),
+          count: 20,
+          excludeItems: seen.take(30).toList(),
         );
+
+        final aiWords = rawItems
+            .map((item) => (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString())
+            .where((w) => w.trim().isNotEmpty)
+            .toList();
 
         for (final word in aiWords) {
           final trimmed = word.trim();
@@ -1617,7 +1863,8 @@ class GameContentService {
 }
 
 final aiQuestionServiceProvider = Provider<AiQuestionService>((ref) {
-  return AiQuestionService();
+  final storage = ref.watch(localStorageProvider);
+  return AiQuestionService(storage: storage);
 });
 
 final gameContentServiceProvider = Provider<GameContentService>((ref) {

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../data/providers/game_providers.dart';
 import 'presentation/controllers/trivia_controller.dart';
 import 'presentation/controllers/trivia_state.dart';
 
@@ -151,6 +152,34 @@ class TriviaPlayScreen extends ConsumerWidget {
                   },
                 ),
               ),
+
+              if (isReveal)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Center(
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(foregroundColor: Colors.white54),
+                      icon: const Icon(Icons.flag_outlined, size: 15),
+                      label: const Text('إبلاغ عن خطأ في السؤال 🚩', style: TextStyle(fontSize: 12)),
+                      onPressed: () async {
+                        final api = ref.read(apiClientProvider);
+                        await api.reportContent(
+                          contentType: 'trivia',
+                          contentId: currentQ.id,
+                          reason: 'إبلاغ من لاعب أثناء الجولة',
+                        );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم استلام بلاغك! سنراجع السؤال ونعزله تلقائياً 🙏'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

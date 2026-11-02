@@ -1,5 +1,4 @@
-// Lamma - by Mohamed Ibrahim
-
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -77,6 +76,10 @@ class _JoinRoomScreenState extends ConsumerState<JoinRoomScreen> {
     final result = await client.connect();
     if (result.isSuccess) {
       roomNotifier.setClient(client, code, host);
+      try {
+        final api = ref.read(apiClientProvider);
+        unawaited(api.joinRoomSession(code));
+      } catch (_) {}
       if (mounted) context.push(AppRoutes.lobby);
     }
   }

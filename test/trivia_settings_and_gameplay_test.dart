@@ -1,4 +1,4 @@
-// Lamma - by Mohamed Ibrahim
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lamma_party_game_app/data/api/api_client.dart';
 import 'package:lamma_party_game_app/data/models/bootstrap_data.dart';
@@ -35,6 +35,7 @@ class MockApiClient extends ApiClient {
     String? difficulty,
     int count = 20,
     List<String> excludeItems = const [],
+    CancelToken? cancelToken,
   }) async {
     if (throwOnAi) {
       throw Exception('AI generation failed');

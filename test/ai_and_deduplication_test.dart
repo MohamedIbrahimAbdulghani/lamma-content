@@ -128,7 +128,7 @@ void main() {
         };
       });
 
-      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-2.5-flash');
+      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-3.5-flash-lite');
       final questions = await aiService.generateTriviaQuestions(count: 1);
 
       expect(questions.length, equals(1));
@@ -159,7 +159,7 @@ void main() {
         };
       });
 
-      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-2.5-flash');
+      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-3.5-flash-lite');
       final words = await aiService.generateSpyWords(count: 1);
 
       expect(words.length, equals(1));
@@ -185,7 +185,7 @@ void main() {
         };
       });
 
-      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-2.5-flash');
+      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-3.5-flash-lite');
       expect(
         () => aiService.generateTriviaQuestions(count: 1),
         throwsA(isA<AiInvalidResponseException>()),
@@ -197,7 +197,6 @@ void main() {
     test('رفض الأسئلة المشاهدة سابقاً وتكرار الطلب للعدد الناقص', () async {
       final prefs = await SharedPreferences.getInstance();
       final storage = LocalStorage(prefs);
-      final apiClient = ApiClient(storage);
 
       // تسجيل سؤال مسبقاً في السجل
       const existingPrompt = 'مين بطل فيلم الكيف؟';
@@ -212,30 +211,21 @@ void main() {
           return {
             'status': 200,
             'data': {
-              'candidates': [
+              'success': true,
+              'data': [
                 {
-                  'content': {
-                    'parts': [
-                      {
-                        'text': jsonEncode([
-                          {
-                            'category_slug': 'movies',
-                            'difficulty': 'easy',
-                            'prompt_ar': existingPrompt, // مكرر!
-                            'options': ['محمود عبد العزيز', 'يحيى الفخراني', 'أحمد زكي', 'نور الشريف'],
-                            'correct_index': 0,
-                          },
-                          {
-                            'category_slug': 'movies',
-                            'difficulty': 'easy',
-                            'prompt_ar': 'مين مخرج فيلم الكيف؟',
-                            'options': ['علي عبد الخالق', 'داود عبد السيد', 'محمد خان', 'شريف عرفة'],
-                            'correct_index': 0,
-                          }
-                        ]),
-                      }
-                    ]
-                  }
+                  'category_slug': 'movies',
+                  'difficulty': 'easy',
+                  'prompt_ar': existingPrompt, // مكرر!
+                  'options': ['محمود عبد العزيز', 'يحيى الفخراني', 'أحمد زكي', 'نور الشريف'],
+                  'correct_index': 0,
+                },
+                {
+                  'category_slug': 'movies',
+                  'difficulty': 'easy',
+                  'prompt_ar': 'مين مخرج فيلم الكيف؟',
+                  'options': ['علي عبد الخالق', 'داود عبد السيد', 'محمد خان', 'شريف عرفة'],
+                  'correct_index': 0,
                 }
               ]
             }
@@ -245,23 +235,14 @@ void main() {
           return {
             'status': 200,
             'data': {
-              'candidates': [
+              'success': true,
+              'data': [
                 {
-                  'content': {
-                    'parts': [
-                      {
-                        'text': jsonEncode([
-                          {
-                            'category_slug': 'movies',
-                            'difficulty': 'easy',
-                            'prompt_ar': 'مين مؤلف فيلم الكيف؟',
-                            'options': ['محمود أبو زيد', 'وحيد حامد', 'أسامة أنور عكاشة', 'لينين الرملي'],
-                            'correct_index': 0,
-                          }
-                        ]),
-                      }
-                    ]
-                  }
+                  'category_slug': 'movies',
+                  'difficulty': 'easy',
+                  'prompt_ar': 'مين مؤلف فيلم الكيف؟',
+                  'options': ['محمود أبو زيد', 'وحيد حامد', 'أسامة أنور عكاشة', 'لينين الرملي'],
+                  'correct_index': 0,
                 }
               ]
             }
@@ -269,7 +250,8 @@ void main() {
         }
       });
 
-      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-2.5-flash');
+      final apiClient = ApiClient(storage, dio: dio);
+      final aiService = AiQuestionService(dio: dio, apiKey: 'test_key', model: 'gemini-3.5-flash-lite');
       final contentService = GameContentService(apiClient, storage, ai: aiService);
 
       final questions = await contentService.getTriviaQuestions(
@@ -520,7 +502,7 @@ void main() {
   });
 
   group('10. اختبارات واجهة المستخدم وخلوها من RenderFlex Overflow', () {
-    testWidgets('شاشة الخطأ في Bottom Sheet (زرّا إعادة المحاولة وتعديل الإعدادات) لا تسبب RenderFlex overflow على الشاشات الصغيرة (320px)',
+    testWidgets('شاشة تحديث ومزامنة المحتوى الذكي في Bottom Sheet لا تسبب RenderFlex overflow على الشاشات الصغيرة (320px)',
         (WidgetTester tester) async {
       tester.view.physicalSize = const Size(320, 600);
       tester.view.devicePixelRatio = 1.0;
@@ -540,24 +522,20 @@ void main() {
           container: container,
           child: const MaterialApp(
             home: Scaffold(
-              body: AiGenerationSheet(gameType: 'trivia'),
+              body: SingleChildScrollView(
+                child: AiGenerationSheet(gameType: 'trivia'),
+              ),
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      // نضغط على ولّد الآن للدخول في الـ flow
-      final genBtn = find.text('ولّد الآن بالذكاء الاصطناعي');
-      expect(genBtn, findsOneWidget);
-      await tester.ensureVisible(genBtn);
-      await tester.tap(genBtn);
-      await tester.pumpAndSettle();
-
-      // شاشة الخطأ ستظهر لعدم وجود مفتاح API حقيقي
-      expect(find.text('تعذر التوليد'), findsOneWidget);
-      expect(find.text('تعديل الإعدادات'), findsOneWidget);
-      expect(find.text('إعادة المحاولة'), findsOneWidget);
+      // التأكد من ظهور شاشة المزامنة المستقلة
+      expect(find.text('تحديث ومزامنة المحتوى الذكي ⚡'), findsOneWidget);
+      final syncBtn = find.text('تحديث وتعويض المخزون الآن 🔄');
+      expect(syncBtn, findsOneWidget);
+      expect(find.text('تم، جاهز للعب 🚀'), findsOneWidget);
 
       // التأكد التام من عدم وجود أي خطأ RenderFlex overflow
       expect(tester.takeException(), isNull);

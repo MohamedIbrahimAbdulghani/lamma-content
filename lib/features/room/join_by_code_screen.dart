@@ -205,6 +205,10 @@ class _JoinByCodeScreenState extends ConsumerState<JoinByCodeScreen> {
     if (result.isSuccess) {
       _consecutiveFailures = 0;
       roomNotifier.setClient(client, cleanCode, hostIp);
+      try {
+        final api = ref.read(apiClientProvider);
+        unawaited(api.joinRoomSession(cleanCode));
+      } catch (_) {}
       context.push(AppRoutes.lobby);
     } else {
       switch (result.errorKey) {
