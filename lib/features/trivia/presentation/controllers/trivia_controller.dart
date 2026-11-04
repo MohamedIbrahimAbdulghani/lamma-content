@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lamma_party_game_app/core/utils/category_localization.dart';
 import 'package:lamma_party_game_app/data/models/bootstrap_data.dart';
 import 'package:lamma_party_game_app/data/models/player_model.dart';
 import 'package:lamma_party_game_app/data/models/question_model.dart';
@@ -135,6 +136,9 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
   Timer? _leaderboardTimer;
   Timer? _leaderboardPeriodicTimer;
 
+  final String? roomCode;
+  final dynamic roomServer;
+
   TriviaGameNotifier({
     List<QuestionModel>? initialQuestions,
     List<PlayerModel>? initialPlayers,
@@ -145,6 +149,8 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     bool autoStart = true,
     this.startWithSelection = false,
     this.contentService,
+    this.roomCode,
+    this.roomServer,
   }) : super(TriviaGameState(
           questions: initialQuestions ?? kDefaultTriviaQuestions,
           totalSeconds: totalSeconds,
@@ -156,6 +162,19 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
         )) {
     if (autoStart && !startWithSelection && state.questions.isNotEmpty) {
       _startQuestionTimer();
+      _recordCurrentQuestionPresented();
+
+      // تجهيز مسبق في الخلفية للجولة التالية أثناء سير الجولة الأولى
+      if (contentService != null && roomCode != null && roomCode!.isNotEmpty) {
+        contentService!.prebufferNextTriviaGame(
+          roomCode: roomCode!,
+          count: state.questions.length,
+          categories: state.questions.map((q) => q.categorySlug).toSet().toList(),
+          difficulty: 'all',
+          externalSeenPromptHashes: roomServer?.getAllSeenTriviaPromptHashes(),
+          externalSeenAnswerHashes: roomServer?.getAllSeenTriviaAnswerHashes(),
+        );
+      }
     }
   }
 
@@ -170,6 +189,13 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
       const PlayerModel(id: '4', name: 'نور', avatar: '🐼', score: 0),
       const PlayerModel(id: '5', name: 'عمر', avatar: '🐯', score: 0),
     ];
+  }
+
+  void _recordCurrentQuestionPresented() {
+    final curQ = state.currentQuestion;
+    if (curQ != null && contentService != null) {
+      contentService!.markTriviaQuestionPresented(curQ);
+    }
   }
 
   void _startQuestionTimer() {
@@ -206,6 +232,7 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
     );
 
     _startQuestionTimer();
+    _recordCurrentQuestionPresented();
   }
 
   /// اختيار سؤال عشوائي من الأسئلة المتبقية
@@ -352,6 +379,7 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
           leaderboardSecondsLeft: 3,
         );
         _startQuestionTimer();
+        _recordCurrentQuestionPresented();
       } else {
         state = state.copyWith(phase: TriviaPhase.completed);
       }
@@ -377,23 +405,63 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
 
     List<QuestionModel> questionsToUse = newQuestions ?? [];
     if (questionsToUse.isEmpty && contentService != null) {
-      questionsToUse = await contentService!.getTriviaQuestions(
-        count: questionCount ?? 10,
-        categories: categories ?? const [],
-        difficulty: difficulty ?? 'all',
-        bootstrapData: bootstrapData,
-      );
-    }
+      final effectiveRoomCode = roomCode ?? '';
+      final neededCount = questionCount ?? (state.questions.isNotEmpty ? state.questions.length : 10);
+      final cats = categories ?? (state.questions.map((q) => q.categorySlug).toSet().toList());
+      final diff = difficulty ?? 'all';
 
-    if (questionsToUse.isEmpty) {
-      questionsToUse = List.from(kDefaultTriviaQuestions)..shuffle(Random());
-      final c = questionCount ?? 10;
-      if (c > 0 && c < questionsToUse.length) {
-        questionsToUse = questionsToUse.take(c).toList();
+      // 1. استهلاك فوري للمحتوى المجهز مسبقاً والمحجوز لهذه الغرفة
+      if (effectiveRoomCode.isNotEmpty) {
+        final prebuffered = contentService!.consumePrebufferedTrivia(
+          effectiveRoomCode,
+          count: neededCount,
+          categories: cats,
+          difficulty: diff,
+        );
+        if (prebuffered != null && prebuffered.length >= neededCount) {
+          questionsToUse = prebuffered;
+          // إطلاق حجز مسبق في الخلفية فوراً للعبة التالية
+          unawaited(contentService!.prebufferNextTriviaGame(
+            roomCode: effectiveRoomCode,
+            count: neededCount,
+            categories: cats,
+            difficulty: diff,
+            externalSeenPromptHashes: roomServer?.getAllSeenTriviaPromptHashes(),
+            externalSeenAnswerHashes: roomServer?.getAllSeenTriviaAnswerHashes(),
+          ));
+        }
+      }
+
+      // 2. إذا لم يكتمل التجهيز المسبق، جلب بدفعة واحدة
+      if (questionsToUse.isEmpty) {
+        questionsToUse = await contentService!.getTriviaQuestions(
+          count: neededCount,
+          categories: cats,
+          difficulty: diff,
+          bootstrapData: bootstrapData,
+          roomCode: effectiveRoomCode.isNotEmpty ? effectiveRoomCode : null,
+          externalSeenPromptHashes: roomServer?.getAllSeenTriviaPromptHashes(),
+          externalSeenAnswerHashes: roomServer?.getAllSeenTriviaAnswerHashes(),
+        );
       }
     }
 
+    if (questionsToUse.isEmpty) {
+      final categoryLabel = CategoryLocalization.getTriviaCategoriesLabel(categories ?? []);
+      throw InsufficientTriviaQuestionsException(
+        category: categoryLabel,
+        available: 0,
+        requiredCount: questionCount ?? 10,
+      );
+    }
+
     final seconds = totalSeconds ?? state.totalSeconds;
+
+    // تحديث سيرفر الغرفة للملتيبلاير لبدء السؤال الأول لدى كافة الأجهزة الحاضرة فوراً
+    if (roomServer != null) {
+      roomServer.setPlayers(resetPlayers);
+      roomServer.startTriviaGame(questionsToUse, timePerQuestion: seconds);
+    }
 
     state = TriviaGameState(
       questions: questionsToUse,
@@ -407,7 +475,16 @@ class TriviaGameNotifier extends StateNotifier<TriviaGameState> {
 
     if (!startWithSelection && questionsToUse.isNotEmpty) {
       _startQuestionTimer();
+      _recordCurrentQuestionPresented();
     }
+  }
+
+  /// إلغاء مؤقتات الجولة الحالية فوراً عند الرجوع للوبي
+  void cancelRound() {
+    _questionTimer?.cancel();
+    _revealTimer?.cancel();
+    _leaderboardTimer?.cancel();
+    _leaderboardPeriodicTimer?.cancel();
   }
 
   @override
@@ -426,6 +503,7 @@ final triviaGameProvider = StateNotifierProvider<TriviaGameNotifier, TriviaGameS
   final bootstrap = ref.read(bootstrapProvider);
   final scoringSettings = bootstrap.data?.settings['scoring'] as Map<String, dynamic>?;
   final roomState = ref.read(gameRoomProvider);
+  final roomServer = ref.read(gameRoomProvider.notifier).server;
   final currentPlayerName = ref.read(currentPlayerNameProvider);
   final currentPlayerAvatar = ref.read(currentPlayerAvatarProvider);
   final contentService = ref.read(gameContentServiceProvider);
@@ -458,6 +536,8 @@ final triviaGameProvider = StateNotifierProvider<TriviaGameNotifier, TriviaGameS
     myPlayerId: roomState.myPlayerId.isNotEmpty ? roomState.myPlayerId : '1',
     startWithSelection: false,
     contentService: contentService,
+    roomCode: roomState.roomCode,
+    roomServer: roomServer,
     onPlayersUpdated: (players) {
       ref.read(gameRoomProvider.notifier).setPlayers(players);
     },

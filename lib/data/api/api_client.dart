@@ -48,6 +48,8 @@ class ApiClient {
     );
   }
 
+  Dio get dio => _dio;
+
   // 1. Check content version
   Future<Map<String, dynamic>?> checkVersion() async {
     try {
@@ -155,8 +157,12 @@ class ApiClient {
         ),
       );
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
-        final data = response.data['data'] as List<dynamic>? ?? [];
-        return data.cast<Map<String, dynamic>>();
+        dynamic rawData = response.data['data'];
+        if (rawData is Map<String, dynamic> && rawData.containsKey('items')) {
+          rawData = rawData['items'];
+        }
+        final data = rawData is List<dynamic> ? rawData : <dynamic>[];
+        return data.whereType<Map<String, dynamic>>().toList();
       }
       return [];
     } on DioException catch (e) {
@@ -282,11 +288,15 @@ class ApiClient {
     String roomCode, {
     String? categories,
     String? difficulty,
+    List<String> excludeHashes = const [],
+    List<String> excludeAnswerHashes = const [],
   }) async {
     try {
       final queryParams = <String, dynamic>{};
       if (categories != null && categories.isNotEmpty) queryParams['categories'] = categories;
       if (difficulty != null && difficulty.isNotEmpty) queryParams['difficulty'] = difficulty;
+      if (excludeHashes.isNotEmpty) queryParams['exclude_hashes'] = excludeHashes;
+      if (excludeAnswerHashes.isNotEmpty) queryParams['exclude_answer_hashes'] = excludeAnswerHashes;
 
       final response = await _dio.get(
         '/rooms/$roomCode/next-question',
@@ -304,6 +314,93 @@ class ApiClient {
       debugPrint('fetchNextRoomQuestion error: $e');
     }
     return null;
+  }
+
+  // 12.1 Next Trivia Questions Batch (Pre-buffering & Instant Play Again)
+  Future<List<QuestionModel>> fetchNextRoomQuestionsBatch(
+    String roomCode, {
+    int count = 10,
+    String? categories,
+    String? difficulty,
+    List<String> excludeHashes = const [],
+    List<String> excludeAnswerHashes = const [],
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{'count': count};
+      if (categories != null && categories.isNotEmpty) queryParams['categories'] = categories;
+      if (difficulty != null && difficulty.isNotEmpty) queryParams['difficulty'] = difficulty;
+      if (excludeHashes.isNotEmpty) queryParams['exclude_hashes'] = excludeHashes;
+      if (excludeAnswerHashes.isNotEmpty) queryParams['exclude_answer_hashes'] = excludeAnswerHashes;
+
+      final response = await _dio.get(
+        '/rooms/$roomCode/next-questions-batch',
+        queryParameters: queryParams,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        final rawData = response.data['data'];
+        if (rawData is List) {
+          return rawData.map((item) => QuestionModel.fromJson(item as Map<String, dynamic>)).toList();
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchNextRoomQuestionsBatch error: $e');
+    }
+    return [];
+  }
+
+  // 12.2 Next Charades Words Batch (Pre-buffering & Instant Play Again)
+  Future<List<String>> fetchNextCharadesBatch(
+    String roomCode, {
+    int count = 15,
+    String category = 'movies',
+    List<String> excludeWords = const [],
+  }) async {
+    try {
+      final queryParams = <String, dynamic>{
+        'count': count,
+        'category': category,
+      };
+      if (excludeWords.isNotEmpty) queryParams['exclude_words'] = excludeWords;
+
+      final response = await _dio.get(
+        '/rooms/$roomCode/next-charades-batch',
+        queryParameters: queryParams,
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        final rawData = response.data['data'];
+        if (rawData is List) {
+          return rawData.map((item) => (item['word_ar'] ?? '').toString()).where((w) => w.isNotEmpty).toList();
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // 12.3 Next Spy Rounds Batch (Pre-buffering & Instant Play Again)
+  Future<List<Map<String, dynamic>>> fetchNextSpyBatch(
+    String roomCode, {
+    int rounds = 3,
+    String packSlug = 'places',
+  }) async {
+    try {
+      final response = await _dio.get(
+        '/rooms/$roomCode/next-spy-batch',
+        queryParameters: {'rounds': rounds, 'pack_slug': packSlug},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+
+      if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
+        final list = response.data['data'] as List<dynamic>?;
+        if (list != null) {
+          return list.cast<Map<String, dynamic>>();
+        }
+      }
+    } catch (_) {}
+    return [];
   }
 
   // 13. Grade Question on Backend
@@ -336,11 +433,21 @@ class ApiClient {
     String roomCode, {
     String pack = 'places',
     String difficulty = 'medium',
+    String? previousWord,
+    List<String> seenWordHashes = const [],
   }) async {
     try {
+      final queryParams = <String, dynamic>{'pack': pack, 'difficulty': difficulty};
+      if (previousWord != null && previousWord.isNotEmpty) {
+        queryParams['previous_word'] = previousWord;
+      }
+      if (seenWordHashes.isNotEmpty) {
+        queryParams['seen_word_hashes'] = seenWordHashes;
+      }
+
       final response = await _dio.get(
         '/rooms/$roomCode/next-spy-round',
-        queryParameters: {'pack': pack, 'difficulty': difficulty},
+        queryParameters: queryParams,
         options: Options(receiveTimeout: const Duration(seconds: 15)),
       );
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
@@ -356,11 +463,17 @@ class ApiClient {
   Future<String?> fetchNextCharadesWord(
     String roomCode, {
     String category = 'movies',
+    List<String> excludeWords = const [],
   }) async {
     try {
+      final queryParams = <String, dynamic>{'category': category};
+      if (excludeWords.isNotEmpty) {
+        queryParams['exclude_words'] = excludeWords;
+      }
+
       final response = await _dio.get(
         '/rooms/$roomCode/next-charades',
-        queryParameters: {'category': category},
+        queryParameters: queryParams,
       );
       if (response.statusCode == 200 && response.data is Map<String, dynamic>) {
         return response.data['data']?['word_ar'] as String?;

@@ -5,9 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/providers/game_providers.dart';
 import 'presentation/controllers/trivia_controller.dart';
 import 'presentation/controllers/trivia_state.dart';
+
+final reportedQuestionsProvider = StateProvider.autoDispose<Set<int>>((ref) => {});
 
 class TriviaPlayScreen extends ConsumerWidget {
   const TriviaPlayScreen({super.key});
@@ -26,54 +29,60 @@ class TriviaPlayScreen extends ConsumerWidget {
       }
     });
 
+    Widget content;
+
     // 1. شاشة اختيار السؤال / التحدي
     if (triviaState.phase == TriviaPhase.questionSelection) {
-      return _buildQuestionSelectionView(context, triviaState, notifier);
-    }
+      content = _buildQuestionSelectionView(context, triviaState, notifier);
+    } else {
+      final currentQ = triviaState.currentQuestion;
+      if (currentQ == null) {
+        content = Scaffold(
+          backgroundColor: AppTheme.bg,
+          body: const Center(
+            child: CircularProgressIndicator(color: AppTheme.accentSaffron),
+          ),
+        );
+      } else {
+        final totalQ = triviaState.totalQuestions;
+        final displayNum = triviaState.currentQuestionIndex + 1;
+        final isReveal = triviaState.phase == TriviaPhase.reveal;
+        final isCorrect = triviaState.answerResult == TriviaAnswerResult.correct;
+        final isWrong = triviaState.answerResult == TriviaAnswerResult.wrong;
 
-    final currentQ = triviaState.currentQuestion;
-    if (currentQ == null) {
-      return Scaffold(
-        backgroundColor: AppTheme.bg,
-        body: const Center(
-          child: CircularProgressIndicator(color: AppTheme.accentSaffron),
-        ),
-      );
-    }
-
-    final totalQ = triviaState.totalQuestions;
-    final displayNum = triviaState.currentQuestionIndex + 1;
-    final isReveal = triviaState.phase == TriviaPhase.reveal;
-    final isCorrect = triviaState.answerResult == TriviaAnswerResult.correct;
-    final isWrong = triviaState.answerResult == TriviaAnswerResult.wrong;
-
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Top Bar: Question badge and circular timer
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        content = Scaffold(
+          backgroundColor: AppTheme.bg,
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppTheme.cardBg,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'سؤال $displayNum من $totalQ',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                  // Top Bar: Back button, Question badge and circular timer
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const GameBackCircularButton(),
+                          const SizedBox(width: 12),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.cardBg,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              'سؤال $displayNum من $totalQ',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ),
                   Container(
                     width: 48,
                     height: 48,
@@ -154,37 +163,60 @@ class TriviaPlayScreen extends ConsumerWidget {
               ),
 
               if (isReveal)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Center(
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(foregroundColor: Colors.white54),
-                      icon: const Icon(Icons.flag_outlined, size: 15),
-                      label: const Text('إبلاغ عن خطأ في السؤال 🚩', style: TextStyle(fontSize: 12)),
-                      onPressed: () async {
-                        final api = ref.read(apiClientProvider);
-                        await api.reportContent(
-                          contentType: 'trivia',
-                          contentId: currentQ.id,
-                          reason: 'إبلاغ من لاعب أثناء الجولة',
-                        );
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('تم استلام بلاغك! سنراجع السؤال ونعزله تلقائياً 🙏'),
-                              duration: Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ),
+                Consumer(
+                  builder: (context, ref, _) {
+                    final reportedSet = ref.watch(reportedQuestionsProvider);
+                    final isAlreadyReported = reportedSet.contains(currentQ.id);
+
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Center(
+                        child: TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: isAlreadyReported ? Colors.white30 : Colors.white54,
+                          ),
+                          icon: Icon(
+                            isAlreadyReported ? Icons.check_circle_outline : Icons.flag_outlined,
+                            size: 15,
+                            color: isAlreadyReported ? AppTheme.accentMint : null,
+                          ),
+                          label: Text(
+                            isAlreadyReported ? 'تم تسجيل بلاغك' : 'الإجابة غلط؟ 🚩',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          onPressed: isAlreadyReported
+                              ? null
+                              : () async {
+                                  ref.read(reportedQuestionsProvider.notifier).update((state) => {...state, currentQ.id});
+                                  final api = ref.read(apiClientProvider);
+                                  await api.reportContent(
+                                    contentType: 'trivia',
+                                    contentId: currentQ.id,
+                                    reason: 'إبلاغ من لاعب أثناء الجولة: الإجابة غير صحيحة',
+                                  );
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('شكراً لبلاغك! سيتم عزل السؤال تلقائياً عند تكرار البلاغ 🙏'),
+                                        duration: Duration(seconds: 2),
+                                      ),
+                                    );
+                                  }
+                                },
+                        ),
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
         ),
       ),
     );
+      }
+    }
+
+    return GameBackScope(child: content);
   }
 
   // ==========================================
@@ -204,10 +236,7 @@ class TriviaPlayScreen extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.go('/lobby'),
-        ),
+        leading: const GameBackButton(),
         title: Text(
           'تحدي الشلة (سؤال $currentRoundNum من $total)',
           style: const TextStyle(

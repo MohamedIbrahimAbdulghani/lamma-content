@@ -189,42 +189,47 @@ class RoomClient {
   void _recordSeenContentFromState(Map<String, dynamic> payload) {
     if (storage == null) return;
     try {
-      // 1. تحدي الشلة
-      final rawQuestions = payload['trivia_questions'] as List<dynamic>?;
-      if (rawQuestions != null && rawQuestions.isNotEmpty) {
-        final promptHashes = <String>[];
-        final answerHashes = <String>[];
-        for (final item in rawQuestions) {
-          if (item is Map<String, dynamic>) {
-            final prompt = item['prompt_ar'] as String?;
-            final cat = (item['category_slug'] ?? 'general') as String;
-            final opts = (item['options'] as List<dynamic>?)?.map((e) => e.toString()).toList();
-            final cIdx = item['correct_index'] as int? ?? 0;
-            if (prompt != null && prompt.isNotEmpty) {
-              promptHashes.add(ArabicTextNormalizer.triviaQuestionHash(prompt));
-              if (opts != null && cIdx >= 0 && cIdx < opts.length) {
-                answerHashes.add(ArabicTextNormalizer.triviaAnswerHash(cat, opts[cIdx]));
-              }
-            }
-          }
-        }
-        if (promptHashes.isNotEmpty || answerHashes.isNotEmpty) {
-          storage!.markTriviaHashesSeen(promptHashes: promptHashes, answerHashes: answerHashes);
+      // 1. تحدي الشلة: تسجيل السؤال لحظة تقديمه الفعلي فقط
+      final curQ = payload['current_question'] as Map<String, dynamic>?;
+      if (curQ != null) {
+        final prompt = curQ['prompt_ar'] as String?;
+        final cat = (curQ['category_slug'] ?? 'general') as String;
+        final opts = (curQ['options'] as List<dynamic>?)?.map((e) => e.toString()).toList();
+        final cIdx = curQ['correct_index'] as int? ?? -1;
+        if (prompt != null && prompt.isNotEmpty) {
+          final pHash = ArabicTextNormalizer.triviaQuestionHash(prompt);
+          final aHash = (opts != null && cIdx >= 0 && cIdx < opts.length)
+              ? ArabicTextNormalizer.triviaAnswerHash(cat, opts[cIdx])
+              : null;
+          storage!.markTriviaHashesSeen(
+            promptHashes: [pHash],
+            answerHashes: aHash != null ? [aHash] : [],
+          );
         }
       }
 
-      // 2. مين الجاسوس
+      // 2. مين الجاسوس: الكلمة السرية والخيارات
       final secretWord = payload['secret_word'] as String?;
       if (secretWord != null && secretWord.trim().isNotEmpty) {
         final h = ArabicTextNormalizer.wordHash(secretWord);
         storage!.markSpyHashesSeen([h]);
       }
+      final choices = payload['spy_choices'] as List<dynamic>?;
+      if (choices != null && choices.isNotEmpty) {
+        final cHashes = choices
+            .map((c) => ArabicTextNormalizer.wordHash(c.toString()))
+            .where((h) => h.isNotEmpty)
+            .toList();
+        if (cHashes.isNotEmpty) {
+          storage!.markSpyHashesSeen(cHashes);
+        }
+      }
 
-      // 3. مثّل ومتتكلمش
-      final charadesWords = payload['charades_words'] as List<dynamic>?;
-      if (charadesWords != null && charadesWords.isNotEmpty) {
-        final hashes = charadesWords.map((e) => ArabicTextNormalizer.wordHash(e.toString())).toList();
-        storage!.markCharadesHashesSeen(hashes);
+      // 3. مثّل ومتتكلمش: الكلمة الحالية
+      final curWord = payload['current_charades_word'] as String?;
+      if (curWord != null && curWord.trim().isNotEmpty) {
+        final h = ArabicTextNormalizer.wordHash(curWord);
+        storage!.markCharadesHashesSeen([h]);
       }
     } catch (_) {}
   }
@@ -243,6 +248,19 @@ class RoomClient {
 
   void sendViolation() {
     sendIntent('violation');
+  }
+
+  /// إرسال إشعار مغادرة وإغلاق الاتصال
+  void leaveRoom() {
+    try {
+      if (_isConnected && _socket != null) {
+        _socket!.add(GameMessage(
+          type: 'leave_room',
+          senderId: deviceId,
+        ).serialize());
+      }
+    } catch (_) {}
+    disconnect();
   }
 
   void disconnect() {

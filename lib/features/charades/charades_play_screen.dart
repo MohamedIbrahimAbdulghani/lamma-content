@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/game_back_handler.dart';
 import 'controllers/charades_controller.dart';
 import 'controllers/charades_state.dart';
 
@@ -72,24 +73,26 @@ class _CharadesPlayScreenState extends ConsumerState<CharadesPlayScreen> {
     });
 
     if (charadesState.isLoading || charadesState.words.isEmpty) {
-      return Scaffold(
-        backgroundColor: AppTheme.bg,
-        body: const SafeArea(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(color: AppTheme.accentMint),
-                SizedBox(height: 24),
-                Text(
-                  'جاري تجهيز الكلمات...',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+      return GameBackScope(
+        child: Scaffold(
+          backgroundColor: AppTheme.bg,
+          body: const SafeArea(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: AppTheme.accentMint),
+                  SizedBox(height: 24),
+                  Text(
+                    'جاري تجهيز الكلمات...',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -104,14 +107,16 @@ class _CharadesPlayScreenState extends ConsumerState<CharadesPlayScreen> {
     final passedCount = charadesState.passedCountInRound;
     final playerName = charadesState.currentPlayer?.name ?? '';
 
-    return Scaffold(
-      backgroundColor: _flashState == FlashState.correct
-          ? AppTheme.accentMint
-          : (_flashState == FlashState.pass ? AppTheme.accentCoral : AppTheme.bg),
-      body: SafeArea(
-        child: _flashState != FlashState.none
-            ? _buildFlashContent()
-            : _buildPlayContent(charadesState, minutes, seconds, currentWord, correctCount, passedCount, playerName),
+    return GameBackScope(
+      child: Scaffold(
+        backgroundColor: _flashState == FlashState.correct
+            ? AppTheme.accentMint
+            : (_flashState == FlashState.pass ? AppTheme.accentCoral : AppTheme.bg),
+        body: SafeArea(
+          child: _flashState != FlashState.none
+              ? _buildFlashContent()
+              : _buildPlayContent(charadesState, minutes, seconds, currentWord, correctCount, passedCount, playerName),
+        ),
       ),
     );
   }
@@ -155,8 +160,18 @@ class _CharadesPlayScreenState extends ConsumerState<CharadesPlayScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 1. لوحة نقاط حية ظاهرة طول اللعب (Live Scoreboard)
-          _buildLiveScoreBoard(charadesState),
+          // 1. زر الرجوع ولوحة نقاط حية ظاهرة طول اللعب (Live Scoreboard)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: GameBackCircularButton(),
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: _buildLiveScoreBoard(charadesState)),
+            ],
+          ),
           const SizedBox(height: 12),
 
           // 2. تايمر الجولة وإحصائيات الدور

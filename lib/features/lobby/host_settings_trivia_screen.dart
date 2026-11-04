@@ -7,6 +7,7 @@ import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
 import '../../core/widgets/stepper_row.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
 import 'ai_generation_sheet.dart';
 
 class HostSettingsTriviaScreen extends ConsumerWidget {
@@ -136,6 +137,11 @@ class HostSettingsTriviaScreen extends ConsumerWidget {
                   ref.read(gameRoomProvider.notifier).server?.updateSettings({
                     'trivia': current.toJson(),
                   });
+                  ref.read(gameContentServiceProvider).autoReplenishTriviaIfNeeded(
+                    requiredCount: current.questionsCount,
+                    categories: current.categories.toList(),
+                    difficulty: current.difficulty,
+                  );
                   context.pop();
                 },
               ),

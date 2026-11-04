@@ -390,7 +390,9 @@ class GenerateAiContentService
                         items: (array) $items,
                         count: $count,
                         normalizedExcludes: $normalizedExcludes,
-                        difficulty: $difficulty
+                        difficulty: $difficulty,
+                        category: $category,
+                        categories: $categories
                     );
                 }
 
@@ -613,10 +615,19 @@ class GenerateAiContentService
         array $items,
         int $count,
         array $normalizedExcludes,
-        ?string $difficulty
+        ?string $difficulty,
+        ?string $category = null,
+        array $categories = []
     ): array {
         $filtered = [];
         $seenInBatch = [];
+
+        $targetSlugs = [];
+        if (!empty($categories) && !in_array('all', $categories, true)) {
+            $targetSlugs = array_map([\App\Models\Category::class, 'canonicalSlug'], $categories);
+        } elseif (!empty($category) && $category !== 'all' && $category !== 'mixed') {
+            $targetSlugs = [\App\Models\Category::canonicalSlug($category)];
+        }
 
         foreach ($items as $item) {
             if (!is_array($item)) {
@@ -624,7 +635,7 @@ class GenerateAiContentService
             }
 
             $keyText = $this->extractKeyText($gameType, $item);
-            if (empty($keyText)) {
+            if (empty($keyText) || mb_strlen($keyText) < 5) {
                 continue;
             }
 
@@ -634,19 +645,77 @@ class GenerateAiContentService
                     continue;
                 }
                 $trimmedOptions = array_map(fn($o) => trim((string)$o), $options);
-                if (count(array_unique($trimmedOptions)) !== 4 || in_array('', $trimmedOptions, true)) {
+                if (in_array('', $trimmedOptions, true)) {
+                    continue;
+                }
+                $normOptions = array_map([\App\Helpers\ArabicNormalizer::class, 'normalize'], $trimmedOptions);
+                if (count(array_unique($normOptions)) !== 4) {
                     continue;
                 }
                 $correctIndex = $item['correct_index'] ?? null;
                 if (!is_int($correctIndex) || $correctIndex < 0 || $correctIndex > 3) {
                     continue;
                 }
-                if (!empty($difficulty) && $difficulty !== 'all') {
-                    $itemDiff = $item['difficulty'] ?? 'medium';
-                    if ($itemDiff !== $difficulty) {
-                        $item['difficulty'] = $difficulty;
+
+                $promptAr = trim((string) $item['prompt_ar']);
+                $correctAnswer = $trimmedOptions[$correctIndex];
+
+                // فحص عدم احتواء نص السؤال على الإجابة
+                if (mb_strlen($correctAnswer) >= 3) {
+                    $normPrompt = \App\Helpers\ArabicNormalizer::normalize($promptAr);
+                    $normAnswer = \App\Helpers\ArabicNormalizer::normalize($correctAnswer);
+                    if (str_contains($normPrompt, $normAnswer)) {
+                        continue;
                     }
                 }
+
+                // فحص السؤال الفردي وعدم التركيب
+                $qCount = mb_substr_count($promptAr, '؟') + mb_substr_count($promptAr, '?');
+                if ($qCount > 1 || str_contains($promptAr, ' و من هو ') || str_contains($promptAr, ' و ما هو ')) {
+                    continue;
+                }
+
+                // فحص استبعاد الحقائق المتغيرة زمنياً
+                if (preg_match('/(حالياً|في الوقت الحالي|الآن|أحدث|الأحدث|الهداف التاريخي|المدرب الحالي|أغلى صفقة)/u', $promptAr)) {
+                    continue;
+                }
+
+                // التحقق الصارم من القسم وعدم التسامح
+                $rawCat = $item['category_slug'] ?? ($item['category'] ?? null);
+                if (!$rawCat) {
+                    continue;
+                }
+                $canonicalCat = \App\Models\Category::canonicalSlug((string) $rawCat);
+
+                // إذا طُلب قسم محدد ولم يطابقه السؤال، يُرفض السؤال تماماً دون فرض قسري
+                if (!empty($targetSlugs)) {
+                    if (!in_array($canonicalCat, $targetSlugs, true)) {
+                        continue;
+                    }
+                }
+
+                $item['category_slug'] = $canonicalCat;
+                $item['category'] = $canonicalCat;
+                if (!empty($difficulty) && $difficulty !== 'all') {
+                    $item['difficulty'] = $difficulty;
+                }
+            } elseif ($gameType === 'charades') {
+                $rawCat = $item['category'] ?? ($item['category_slug'] ?? null);
+                $canonicalCat = $rawCat ? \App\Models\Category::canonicalSlug((string) $rawCat) : null;
+                if (!empty($targetSlugs) && $canonicalCat && !in_array($canonicalCat, $targetSlugs, true)) {
+                    continue;
+                }
+                $item['category_slug'] = $canonicalCat ?? ($targetSlugs[0] ?? 'movies');
+                $item['category'] = $item['category_slug'];
+            } elseif ($gameType === 'spy') {
+                $rawCat = $item['category'] ?? ($item['category_slug'] ?? null);
+                $canonicalCat = $rawCat ? \App\Models\Category::canonicalSlug((string) $rawCat) : null;
+                if ($canonicalCat === 'food') $canonicalCat = 'foods';
+                if (!empty($targetSlugs) && $canonicalCat && !in_array($canonicalCat, $targetSlugs, true)) {
+                    continue;
+                }
+                $item['category_slug'] = $canonicalCat ?? ($targetSlugs[0] ?? 'places');
+                $item['category'] = $item['category_slug'];
             }
 
             $norm = ArabicTextNormalizer::normalize($keyText);
@@ -689,46 +758,44 @@ class GenerateAiContentService
 
         switch ($gameType) {
             case 'spy':
-                $catAr = match ($category) {
-                    'movies' => 'أفلام ومسلسلات مصرية شهيرة',
-                    'food' => 'أكلات مصرية شعبية ومشهورة',
-                    default => 'أماكن ومعالم وشوارع مصرية معروفة (القاهرة، الإسكندرية، محافظات مصر)',
+                $cat = ($category === 'food') ? 'foods' : ($category ?? 'places');
+                $catAr = match ($cat) {
+                    'movies' => 'أفلام ومسرحيات ومسلسلات مصرية شهيرة',
+                    'foods' => 'أكلات وحلويات ومشروبات مصرية شعبية ومشهورة',
+                    default => 'أماكن ومعالم وشوارع ومحافظات مصرية معروفة (القاهرة، الإسكندرية، محافظات مصر)',
                 };
                 return "أنت خبير محتوى ألعاب جماعية مصرية لتطبيق 'لمّة' ولعبة 'مين الجاسوس'.
-المطلوب: توليد $count مكان أو كلمة مصرية لتصنيف '$catAr'.
+المطلوب: توليد $count مكان أو كلمة مصرية متجانسة تماماً لتصنيف '$catAr'.
 شروط صارمة:
-1. أسماء مصرية مشهورة يعرفها الجمهور العام بسهولة (أماكن عامة، معالم، أكلات، أفلام).
-2. لا تستخدم أماكن غير حقيقية أو غامضة جداً.
+1. أسماء مصرية مشهورة يعرفها الجمهور العام بسهولة ومن نفس الفئة حصراً.
+2. لا تخلط إطلاقاً بين الفئات (ممنوع إدخال طعام في الأماكن أو أفلام في الأكلات).
+3. لا تستخدم أماكن غير حقيقية أو غامضة جداً.
 $excludeText
 أرجع JSON array فقط من الكائنات بهذا الشكل:
 [
   {
     \"word_ar\": \"خان الخليلي\",
-    \"category\": \"أماكن\",
+    \"category\": \"{$cat}\",
     \"hint\": \"مكان تاريخي وسياحي شهير\"
   }
 ]";
 
             case 'trivia':
                 $activeCategories = !empty($categories) ? $categories : ($category ? [$category] : []);
-                $catNamesMap = [
-                    'movies' => 'أفلام ومسلسلات مصرية',
-                    'sports' => 'كورة ورياضة مصرية',
-                    'afeehat' => 'إفيهات وقفشات سينمائية ومسرحية',
-                    'history' => 'تاريخ وجغرافيا ومعالم مصر',
-                    'general' => 'معلومات عامة وثقافة مصرية',
-                ];
+                $activeCategories = array_filter(array_map([\App\Models\Category::class, 'canonicalSlug'], $activeCategories), fn($c) => $c !== 'all');
 
-                if (!empty($activeCategories)) {
-                    $selectedNames = [];
-                    foreach ($activeCategories as $c) {
-                        if (isset($catNamesMap[$c])) {
-                            $selectedNames[] = $catNamesMap[$c];
-                        }
+                $boundaryClauses = [];
+                foreach ($activeCategories as $slug) {
+                    if (isset(ContentVerificationService::CATEGORY_DEFINITIONS[$slug])) {
+                        $def = ContentVerificationService::CATEGORY_DEFINITIONS[$slug];
+                        $boundaryClauses[] = "- قسم [{$def['name_ar']}] ({$slug}): نطاقه ({$def['scope']})، والممنوع فيه ({$def['not_allowed']}).";
                     }
-                    $catsClause = "الأقسام المسموحة حصراً: [" . implode('، ', $selectedNames) . "]. لا تخرج إطلاقاً عن هذه الأقسام وتوزع الأسئلة بينها بتوازن.";
+                }
+
+                if (!empty($boundaryClauses)) {
+                    $catsClause = "الأقسام المسموحة حصراً مع حدودها الدقيقة:\n" . implode("\n", $boundaryClauses) . "\nيجب أن ينتمي كل سؤال بنسبة 100% لأحد هذه الأقسام حصراً، ويحدد حقل category_slug بالإنجليزية بدقة.";
                 } else {
-                    $catsClause = "الأسئلة متنوعة ومتوازنة من كل الأقسام: أفلام ومسلسلات، كورة مصرية، إفيهات وقفشات، تاريخ وجغرافيا، عامة.";
+                    $catsClause = "الأسئلة متنوعة ومتوازنة من الأقسام الخمسة الرسمية حصراً: [\"movies\", \"sports\", \"afeehat\", \"history\", \"general\"].";
                 }
 
                 $diffClause = match ($difficulty) {
@@ -740,13 +807,21 @@ $excludeText
 
                 return "أنت صانع أسئلة مسابقات مصري محترف لتطبيق 'لمّة' ولعبة 'تحدي الشلة'.
 المطلوب: توليد $count سؤال اختيار من متعدد باللهجة المصرية الدارجة الممتعة والمناسبة لجمهور العائلة والأصحاب.
-$catsClause
-$diffClause
-شروط أمان ومحتوى صارمة:
-1. معلومات موثقة وصحيحة 100% بدون هلوسة أو تأليف، وبدون أي غموض في السؤال.
-2. 4 اختيارات بالضبط مختلفة وفريدة ولا تحتوي اختيارات مكررة أو فارغة، مع تحديد correct_index بدقة (من 0 إلى 3).
-3. استبعاد تام لأي موضوعات دينية جدلية أو سياسية أو محتوى مسيء أو خادش.
-4. تحديد اسم القسم (category_slug) بوضوح ومستوى الصعوبة (difficulty).
+{$catsClause}
+{$diffClause}
+
+شروط أمان وموثوقية معرفية صارمة لا تقبل أي استثناء:
+1. السؤال عن **حقائق ثابتة وراسخة ومعروفة وقابلة للتحقق تاريخياً وعلمياً فقط**.
+2. ممنوع منعاً باتاً:
+   - الأرقام الدقيقة المتغيرة أو القياسية (أعداد الأهداف، الهداف التاريخي، أسعار، بطولات حديثة متغيرة).
+   - الأسئلة الزمنية (\"الأحدث\"، \"حالياً\"، \"الآن\"، \"المدرب الحالي\").
+   - الآراء الشخصية أو التقييمات الفردية.
+   - الأسئلة المركبة (سؤالان في سؤال واحد).
+   - الأسئلة الغامضة أو التي تحتمل أكثر من إجابة صحيحة.
+3. 4 اختيارات بالضبط متجانسة من نفس الفئة المعرفية، الإجابة الصحيحة فريدة والخيارات الثلاثة الأخرى خاطئة قطعاً.
+4. نص السؤال لا يحتوي على الإجابة إطلاقاً.
+5. استبعاد تام لأي موضوعات دينية جدلية أو سياسية أو محتوى مسيء.
+6. تحديد اسم القسم الدقيق (category_slug) بالإنجليزية حصراً: [\"movies\", \"sports\", \"afeehat\", \"history\", \"general\"] ومستوى الصعوبة (difficulty): [\"easy\", \"medium\", \"hard\"].
 $excludeText
 أرجع JSON array فقط بدون أي نصوص تمهيدية أو Markdown خارجي:
 [
@@ -768,17 +843,18 @@ $excludeText
                     'actions' => 'أفعال ومواقف وتعبيرات يومية مصرية مضحكة',
                     default => 'أفلام ومسرحيات ومسلسلات مصرية شهيرة جداً',
                 };
+                $slug = ($category === 'jobs' || $category === 'actions') ? $category : 'movies';
                 return "أنت خبير ألعاب تمثيل بدون كلام (تمثيل صامت / مثّل ومتتكلمش) لتطبيق 'لمّة'.
-المطلوب: توليد $count عنوان أو كلمة قابلة للتمثيل بسهولة من تصنيف '$catAr'.
+المطلوب: توليد $count عنوان أو كلمة قابلة للتمثيل الحركي بسهولة من تصنيف '$catAr'.
 شروط صارمة:
-1. كلمات وأعمال مصرية شهيرة جداً وسهلة أو متوسطة في التخمين بالتمثيل الصامت.
-2. مناسبة للجميع وتثير الضحك والمنافسة.
+1. كلمات وأعمال مصرية شهيرة جداً وسهلة أو متوسطة في التخمين بالتمثيل الصامت ومن هذا القسم حصراً.
+2. لا تخلط أبداً بين الأقسام (لا تضع مهنة في الأفلام، ولا فيلماً في الأفعال).
 $excludeText
 أرجع JSON array فقط:
 [
   {
     \"word_ar\": \"الناظر\",
-    \"category\": \"أفلام\",
+    \"category\": \"{$slug}\",
     \"difficulty\": \"easy\"
   }
 ]";

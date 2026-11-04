@@ -7,6 +7,7 @@ import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
 import '../../core/widgets/stepper_row.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
 import 'ai_generation_sheet.dart';
 
 class HostSettingsCharadesScreen extends ConsumerWidget {
@@ -224,7 +225,20 @@ class HostSettingsCharadesScreen extends ConsumerWidget {
                 title: 'حفظ وارجع للوبي',
                 icon: Icons.check_circle,
                 accentColor: AppTheme.accentMint,
-                onPressed: () => context.pop(),
+                onPressed: () {
+                  final current = ref.read(charadesSettingsProvider);
+                  ref.read(gameRoomProvider.notifier).server?.updateSettings({
+                    'charades': current.toJson(),
+                    'words_per_turn': current.wordsPerTurn,
+                    'round_seconds': current.roundSeconds,
+                    'category': current.category,
+                  });
+                  ref.read(gameContentServiceProvider).autoReplenishCharadesIfNeeded(
+                    requiredCount: current.roundsPerPlayer * 4 * (current.wordsPerTurn > 0 ? current.wordsPerTurn : 10),
+                    category: current.category,
+                  );
+                  context.pop();
+                },
               ),
               const SizedBox(height: 12),
             ],

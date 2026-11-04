@@ -41,6 +41,15 @@ class Question extends Model
         return $query->where('status', 'active')->where('is_active', true);
     }
 
+    protected static function booted(): void
+    {
+        static::creating(function (Question $question) {
+            if (empty($question->content_hash) && !empty($question->prompt_ar)) {
+                $question->content_hash = static::makeContentHash($question->prompt_ar);
+            }
+        });
+    }
+
     public static function makeContentHash(string $promptAr): string
     {
         return sha1(mb_strtolower(trim($promptAr)));

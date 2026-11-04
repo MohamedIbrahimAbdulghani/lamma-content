@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import 'controllers/charades_controller.dart';
 
 class CharadesHandoffScreen extends ConsumerWidget {
@@ -17,30 +18,38 @@ class CharadesHandoffScreen extends ConsumerWidget {
     final roundNumber = charadesState.currentRound;
     final totalRounds = charadesState.totalRounds;
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // رقم الجولة
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.cardBg,
-                  borderRadius: BorderRadius.circular(16),
+    return GameBackScope(
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // زر الرجوع ورقم الجولة
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const GameBackCircularButton(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppTheme.cardBg,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        'الجولة $roundNumber من $totalRounds',
+                        style: const TextStyle(
+                          color: AppTheme.accentMint,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 40),
+                  ],
                 ),
-                child: Text(
-                  'الجولة $roundNumber من $totalRounds',
-                  style: const TextStyle(
-                    color: AppTheme.accentMint,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
 
               Center(
                 child: Column(
@@ -93,6 +102,7 @@ class CharadesHandoffScreen extends ConsumerWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

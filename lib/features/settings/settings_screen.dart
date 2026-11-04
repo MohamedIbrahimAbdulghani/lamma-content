@@ -25,6 +25,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     '🐧', '🦥', '🦦', '🦩'
   ];
 
+  @override
+  void initState() {
+    super.initState();
+    final storage = ref.read(localStorageProvider);
+    _soundEnabled = storage.getSoundEnabled();
+    _vibrationEnabled = storage.getVibrationEnabled();
+  }
+
   void _showNameDialog() {
     final currentName = ref.read(currentPlayerNameProvider);
     final controller = TextEditingController(text: currentName);
@@ -133,8 +141,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20),
         ),
         content: const Text(
-          'هل تريد بالتأكيد تصفير تاريخ جميع الأسئلة والكلمات التي لُعبت سابقاً في كل الألعاب؟\nهذا سيتيح للعبة استخدام البنك كاملاً من البداية.',
-          style: TextStyle(color: AppTheme.textSecondary, fontSize: 16, height: 1.4),
+          'تحذير: هذا الإجراء سيعيد ظهور أسئلة وكلمات شاهدتها من قبل في الألعاب القادمة!\n\nسيتم مسح:\n• بصمات الأسئلة والإجابات المشاهدة المخزنة محلياً على هذا الجهاز.\n• سجل كلمات الجاسوس والتمثيل لهذا الجهاز.\n• سجل المشاهدة الخاص بهذا الجهاز على الخادم.\n\n⚠️ ملاحظة هامة: هذا الإجراء لا يؤثر على سجل الغرفة الجارية ولا يمس بيانات أجهزة اللاعبين الآخرين الحاضرين معك.\n\nهل أنت متأكد من رغبتك في إعادة الضبط؟',
+          style: TextStyle(color: AppTheme.textSecondary, fontSize: 14, height: 1.5),
         ),
         actions: [
           TextButton(
@@ -306,7 +314,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       value: _soundEnabled,
                       activeThumbColor: const Color(0xFF101428),
                       activeTrackColor: AppTheme.accentSaffron,
-                      onChanged: (val) => setState(() => _soundEnabled = val),
+                      onChanged: (val) {
+                        setState(() => _soundEnabled = val);
+                        ref.read(localStorageProvider).setSoundEnabled(val);
+                      },
                     ),
                   ],
                 ),
@@ -336,7 +347,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       value: _vibrationEnabled,
                       activeThumbColor: const Color(0xFF101428),
                       activeTrackColor: AppTheme.accentSaffron,
-                      onChanged: (val) => setState(() => _vibrationEnabled = val),
+                      onChanged: (val) {
+                        setState(() => _vibrationEnabled = val);
+                        ref.read(localStorageProvider).setVibrationEnabled(val);
+                      },
                     ),
                   ],
                 ),
@@ -398,7 +412,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
               // زر توليد الأسئلة بالذكاء الاصطناعي
               InkWell(
-                onTap: () => showAiGenerationSheet(context, gameType: 'trivia'),
+                onTap: () => showAiGenerationSheet(context, gameType: 'all'),
                 borderRadius: BorderRadius.circular(16),
                 child: Container(
                   constraints: const BoxConstraints(minHeight: 60),

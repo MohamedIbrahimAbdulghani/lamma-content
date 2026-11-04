@@ -41,6 +41,10 @@ class LocalStorage {
   static const String _keyCharadesCategory = 'lamma_charades_category';
   static const String _keyCharadesWordsPerTurn = 'lamma_charades_words_per_turn';
 
+  // Sound & Vibration Settings Keys
+  static const String _keySoundEnabled = 'lamma_sound_enabled';
+  static const String _keyVibrationEnabled = 'lamma_vibration_enabled';
+
   final SharedPreferences _prefs;
 
   // In-memory Set caches for O(1) instant history lookups without repeated serialization
@@ -441,5 +445,22 @@ class LocalStorage {
     await _prefs.remove(_keyCharadesRoundsPerPlayer);
     await _prefs.remove(_keyCharadesCategory);
     await _prefs.remove(_keyCharadesWordsPerTurn);
+  }
+
+  // Sound & Vibration Preferences
+  bool getSoundEnabled() {
+    return _prefs.getBool(_keySoundEnabled) ?? true;
+  }
+
+  Future<void> setSoundEnabled(bool enabled) async {
+    await _prefs.setBool(_keySoundEnabled, enabled);
+  }
+
+  bool getVibrationEnabled() {
+    return _prefs.getBool(_keyVibrationEnabled) ?? true;
+  }
+
+  Future<void> setVibrationEnabled(bool enabled) async {
+    await _prefs.setBool(_keyVibrationEnabled, enabled);
   }
 }

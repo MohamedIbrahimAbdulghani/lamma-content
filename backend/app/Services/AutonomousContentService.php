@@ -5,8 +5,6 @@ namespace App\Services;
 
 use App\Helpers\ArabicNormalizer;
 use App\Models\Category;
-use App\Models\CharadesCategory;
-use App\Models\CharadesWord;
 use App\Models\Question;
 use App\Models\SpyGroupWord;
 use App\Models\SpyWordGroup;
@@ -16,11 +14,13 @@ use Illuminate\Support\Facades\Log;
 class AutonomousContentService
 {
     protected GenerateAiContentService $ai;
-    protected const DAILY_LIMIT = 250;
+    protected ContentVerificationService $verifier;
+    protected const DAILY_LIMIT = 500;
 
-    public function __construct(GenerateAiContentService $ai)
+    public function __construct(GenerateAiContentService $ai, ContentVerificationService $verifier)
     {
         $this->ai = $ai;
+        $this->verifier = $verifier;
     }
 
     /**
@@ -33,7 +33,7 @@ class AutonomousContentService
         return $currentCount < self::DAILY_LIMIT;
     }
 
-    protected function incrementAiUsage(): void
+    public function incrementAiUsage(): void
     {
         $todayKey = 'lamma_ai_daily_usage_' . date('Y-m-d');
         $count = (int) Cache::get($todayKey, 0);
@@ -52,7 +52,7 @@ class AutonomousContentService
     }
 
     // =========================================================================
-    // 1. توليد أسئلة تحدي الشلة (توليد + فلترة صارمة + مدقق حقائق AI منفصل)
+    // 1. توليد أسئلة تحدي الشلة (توليد + فلترة صارمة + تحقق أعمى + مدقق مراجعة)
     // =========================================================================
 
     public function generateTriviaQuestions(string $categorySlug, string $difficulty = 'medium', int $count = 8): array
@@ -62,37 +62,56 @@ class AutonomousContentService
             return ['generated' => 0, 'approved' => 0, 'rejected' => 0, 'reasons' => ['سقف الاستخدام اليومي ممتلئ']];
         }
 
-        $category = Category::where('slug', $categorySlug)->first();
+        $canonicalSlug = Category::canonicalSlug($categorySlug);
+        $category = Category::where('slug', $canonicalSlug)->first();
         if (!$category) {
-            $category = Category::where('is_active', true)->first();
-            $categorySlug = $category?->slug ?? 'general';
+            $category = Category::where('is_active', true)->where('slug', '!=', 'nokat')->first();
+            $canonicalSlug = $category?->slug ?? 'general';
         }
 
-        // المرحلة 1: التوليد المبدئي بـ prompt يشدد على تقارب وتجانس الخيارات وصياغة السؤال الفردي
-        $prompt = <<<EOT
-أنت خبير محتوى ألعاب ثقافية وجماعية مصرية (تحدي الشلة).
-قم بتوليد قائمة من {$count} أسئلة اختيار من متعدد في قسم [{$category->name_ar}] ومستوى صعوبة [{$difficulty}].
+        $catDef = ContentVerificationService::CATEGORY_DEFINITIONS[$canonicalSlug] ?? ContentVerificationService::CATEGORY_DEFINITIONS['general'];
 
-شروط صارمة وإلزامية:
-1. صياغة السؤال: سؤال واحد فقط ومحدد بوضوح (ممنوع دمج سؤالين، ممنوع الأسئلة الغامضة، ممنوع الأسئلة المتغيرة تاريخياً مثل "من هو الأفضل حالياً").
-2. 4 خيارات لكل سؤال:
-   - الخيارات الثلاثة الخاطئة (Distractors) يجب أن تكون من **نفس النوع والمستوى تماماً وبنفس الطول والواقعية** (مثلاً: إذا كان السؤال عن مخرج سينمائي مصري، فالخيارات الأربعة كلها مخرجون مصريون كبار؛ إذا كان عن رقم، فالأرقام الأربعة متقاربة؛ إذا كان عن أكلة، فالأربعة أكلات شعبية رئيسية).
-   - ممنوع تماماً خيارات مثل: "كل ما سبق"، "لا شيء مما سبق"، أو خيار شاذ يفضح الإجابة الصحيحة.
-3. التوزيع العشوائي: موزع correct_index بين 0 و 3 بتوازن.
-4. الرد بصيغة JSON فقط كمصفوفة:
+        // توليد مخزون أكبر لتعويض المرفوض بالتحقق الصارم
+        $requestCount = max(6, (int) ceil($count * 1.5));
+
+        $prompt = <<<EOT
+أنت صانع أسئلة مسابقات مصري محترف لتطبيق 'لمّة' ولعبة 'تحدي الشلة'.
+المطلوب: توليد قائمة من {$requestCount} أسئلة اختيار من متعدد في قسم [{$catDef['name_ar']}] ومستوى صعوبة [{$difficulty}].
+
+حدود ونطاق هذا القسم حصراً:
+- النطاق المسموح: {$catDef['scope']}
+- الممنوع في هذا القسم: {$catDef['not_allowed']}
+
+شروط جودة وموثوقية صارمة لا تقبل التهاون:
+1. السؤال عن **حقائق ثابتة ومعروفة تاريخياً وعلمياً فقط**.
+2. ممنوع منعاً باتاً:
+   - الأرقام الدقيقة المتغيرة أو الأرقام القياسية الحديثة (مثل: الهداف التاريخي، أرقام البطولات الحديثة، الأسعار).
+   - الأسئلة الزمنية ("حالياً"، "الآن"، "الأحدث"، "المدرب الحالي").
+   - الآراء والتقييمات الشخصية ("أفضل فيلم"، "أشهر أغنية").
+   - الأسئلة المركبة (سؤالان في سؤال).
+   - الأسئلة الغامضة أو التي تحتمل أكثر من إجابة صحيحة.
+3. 4 خيارات لكل سؤال:
+   - متجانسة تماماً ومن نفس الفئة ونفس الطول الواقعي.
+   - الخيارات الثلاثة الخاطئة خاطئة قطعاً ويقيناً.
+   - خيارات فريدة ولا تحتوي على نص السؤال.
+   - ممنوع خيارات مثل "كل ما سبق" أو "لا شيء مما سبق".
+4. توزيع correct_index عشوائياً بين 0 و 3 بتوازن.
+
+الرد بصيغة JSON array فقط:
 [
   {
-    "prompt_ar": "نص السؤال هنا؟",
-    "options": ["اختيار 1", "اختيار 2", "اختيار 3", "اختيار 4"],
+    "prompt_ar": "نص السؤال الدقيق هنا؟",
+    "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
     "correct_index": 0,
+    "category_slug": "{$canonicalSlug}",
     "difficulty": "{$difficulty}",
-    "explanation_ar": "توضيح مختصر وممتع للمعلومة"
+    "explanation_ar": "توضيح تاريخي مختصر وموثق"
   }
 ]
 EOT;
 
         $rawResponse = $this->ai->generateRawContent($prompt, [
-            'temperature' => 0.4,
+            'temperature' => 0.3,
             'maxOutputTokens' => 2048,
         ]);
         $this->incrementAiUsage();
@@ -106,7 +125,6 @@ EOT;
         $rejectedCount = 0;
         $rejectionReasons = [];
 
-        // جلب عينة من أسئلة نفس القسم لفحص التشابه
         $existingPrompts = Question::where('category_id', $category->id)
             ->where('status', 'active')
             ->pluck('normalized_prompt')
@@ -116,60 +134,48 @@ EOT;
         $batchPrompts = [];
 
         foreach ($candidates as $item) {
-            // أ) التحقق من البنية
+            if ($approvedCount >= $count) {
+                break;
+            }
+
             if (!isset($item['prompt_ar'], $item['options'], $item['correct_index'])) {
                 $rejectedCount++;
                 $rejectionReasons[] = 'بنية السؤال غير مكتملة';
                 continue;
             }
 
+            $promptAr = trim((string) $item['prompt_ar']);
             $options = (array) $item['options'];
             $cIndex = (int) $item['correct_index'];
-            if (count($options) !== 4 || $cIndex < 0 || $cIndex > 3) {
+
+            // 1. الفحوصات الآلية البرمجية الصارمة
+            $autoCheck = $this->verifier->runAutomatedChecks($promptAr, $options, $cIndex);
+            if (!$autoCheck['passed']) {
                 $rejectedCount++;
-                $rejectionReasons[] = 'عدد الاختيارات ليس 4 أو رقم الإجابة خارج النطاق';
+                $rejectionReasons[] = 'فحص آلي: ' . $autoCheck['reason'];
                 continue;
             }
 
-            // التحقق من تمايز الخيارات وعدم فراغها
-            $uniqueOptions = array_unique(array_map('trim', $options));
-            if (count($uniqueOptions) !== 4) {
-                $rejectedCount++;
-                $rejectionReasons[] = 'الخيارات الأربعة تحتوي على خيارات مكررة';
-                continue;
-            }
-
-            $promptAr = trim($item['prompt_ar']);
             $normPrompt = ArabicNormalizer::normalize($promptAr);
 
-            // ب) التحقق من أنه سؤال واحد فقط
-            if (mb_substr_count($promptAr, '؟') > 1 || mb_substr_count($promptAr, '?') > 1 ||
-                str_contains($normPrompt, ' و من هو ') || str_contains($normPrompt, ' و ما هو ')) {
-                $rejectedCount++;
-                $rejectionReasons[] = 'السؤال مركب ويجمع أكثر من سؤال';
-                continue;
-            }
-
-            // ج) التحقق من عدم التكرار (بصمة + تشابه Jaccard)
+            // 2. منع التكرار بالبصمة وتشابه الصياغة
             $pHash = ArabicNormalizer::promptHash($promptAr);
-            $correctOpt = $options[$cIndex];
-            $aHash = ArabicNormalizer::answerHash($category->slug, $correctOpt);
+            $correctOpt = trim($options[$cIndex]);
+            $aHash = ArabicNormalizer::answerHash($canonicalSlug, $correctOpt);
 
-            // تكرار البصمة بالداتابيز
-            if (Question::where('prompt_hash', $pHash)->exists() || Question::where('answer_hash', $aHash)->where('category_id', $category->id)->exists()) {
+            if (Question::where('prompt_hash', $pHash)->exists() ||
+                Question::where('answer_hash', $aHash)->where('category_id', $category->id)->exists()) {
                 $rejectedCount++;
-                $rejectionReasons[] = 'السؤال أو الإجابة مكررة في الداتابيز';
+                $rejectionReasons[] = 'السؤال أو الإجابة مكررة في قاعدة البيانات';
                 continue;
             }
 
-            // تكرار داخل نفس الدفعة
             if (in_array($normPrompt, $batchPrompts, true)) {
                 $rejectedCount++;
                 $rejectionReasons[] = 'السؤال مكرر في نفس الدفعة';
                 continue;
             }
 
-            // فحص تشابه Jaccard مع الأسئلة الحالية
             $isTooSimilar = false;
             foreach ($existingPrompts as $ex) {
                 if (ArabicNormalizer::jaccardSimilarity($normPrompt, $ex) >= 0.65) {
@@ -183,15 +189,29 @@ EOT;
                 continue;
             }
 
-            // د) المرحلة 2: مدقق الحقائق والتجانس المستقل (AI Fact-Checker)
-            $verification = $this->verifyQuestionWithAi($promptAr, $options, $correctOpt, $category->name_ar);
-            if (!$verification['approved']) {
+            // 3. التحقق الأعمى المستقل (Blind Verification) + مدقق المراجعة والتصنيف
+            if (!$this->canMakeAiRequest()) {
+                // قاعدة صارمة: لا مسار "ثق بالـ AI" إذا نفد السقف أو تعذر التحقق
                 $rejectedCount++;
-                $rejectionReasons[] = 'رفض المدقق المستقل: ' . ($verification['reason'] ?? 'عدم تطابق معايير الدقة');
+                $rejectionReasons[] = 'تعذر التحقق بسبب سقف الاستخدام - رفض احترازي';
                 continue;
             }
 
-            // هـ) حساب بصمة المشتتات والاعتماد والنشر
+            $verification = $this->verifier->verifyTriviaQuestion(
+                prompt: $promptAr,
+                options: $options,
+                correctIndex: $cIndex,
+                categorySlug: $canonicalSlug,
+                difficulty: $difficulty
+            );
+
+            if (!$verification['approved']) {
+                $rejectedCount++;
+                $rejectionReasons[] = 'رفض التحقق المستقل: ' . ($verification['reason'] ?? 'عدم تطابق معايير الدقة');
+                continue;
+            }
+
+            // 4. السؤال اجتاز جميع الطبقات بنجاح تام -> حفظه ونشره
             $distractors = $options;
             unset($distractors[$cIndex]);
             sort($distractors);
@@ -229,64 +249,6 @@ EOT;
         ];
     }
 
-    /**
-     * المرحلة 2: فحص دقة وحقيقة وتجانس السؤال عبر مدقق AI مستقل
-     */
-    protected function verifyQuestionWithAi(string $prompt, array $options, string $correctAnswer, string $categoryName): array
-    {
-        if (!$this->canMakeAiRequest()) {
-            return ['approved' => true, 'reason' => 'Skipped AI check due to quota'];
-        }
-
-        $optsFormatted = implode("\n", array_map(fn($idx, $opt) => ($idx + 1) . ") " . $opt, array_keys($options), $options));
-
-        $checkPrompt = <<<EOT
-أنت مدقق حقائق صارم لألعاب المسابقات الجماعية.
-افحص هذا السؤال وخياراته في قسم [{$categoryName}]:
-
-السؤال: {$prompt}
-الخيارات:
-{$optsFormatted}
-الإجابة المعتمدة: {$correctAnswer}
-
-المطلوب التحقق بدقة من 5 معايير:
-1. هل الإجابة المعتمدة صحيحة يقيناً كثابت حقيقي؟ (is_factually_correct)
-2. هل الخيارات الثلاثة الأخرى خاطئة قطعاً ولا تحتمل أي لبس أو صواب بديل؟ (distractors_definitely_wrong)
-3. هل الخيارات الأربعة متجانسة تماماً ومن نفس الفئة المعرفية واللغوية ونفس مستوى التحديد دون خيار شاذ؟ (options_homogeneous)
-4. هل السؤال فردي وثابت وليس مركباً ولا غامضاً؟ (single_clear_question)
-5. هل المحتوى سليم وخالٍ من الإساءة والسياسة والجدل الحاد؟ (safe_content)
-
-أجب بـ JSON فقط:
-{
-  "is_factually_correct": true,
-  "distractors_definitely_wrong": true,
-  "options_homogeneous": true,
-  "single_clear_question": true,
-  "safe_content": true,
-  "verdict": "APPROVE",
-  "reason": "OK"
-}
-لو وجد أي خلل اجعل verdict هو "REJECT" واذكر السبب في reason.
-EOT;
-
-        try {
-            $raw = $this->ai->generateRawContent($checkPrompt, [
-                'temperature' => 0.1,
-                'maxOutputTokens' => 500,
-            ]);
-            $this->incrementAiUsage();
-
-            $data = json_decode($this->cleanJsonString($raw), true);
-            if (isset($data['verdict']) && strtoupper($data['verdict']) === 'APPROVE') {
-                return ['approved' => true];
-            }
-            return ['approved' => false, 'reason' => $data['reason'] ?? 'فشل التحقق المعرفي'];
-        } catch (\Throwable $e) {
-            Log::warning('Verification check exception: ' . $e->getMessage());
-            return ['approved' => false, 'reason' => 'استثناء أثناء تدقيق الحقائق'];
-        }
-    }
-
     // =========================================================================
     // 2. توليد مجموعات كلمات الجاسوس المتجانسة بدقة (Spy Word Groups)
     // =========================================================================
@@ -297,18 +259,24 @@ EOT;
             return ['success' => false, 'error' => 'سقف الاستخدام اليومي ممتلئ'];
         }
 
-        $existingTitles = SpyWordGroup::where('pack_slug', $packSlug)->pluck('title_ar')->all();
+        $canonicalPack = ($packSlug === 'food') ? 'foods' : $packSlug;
+        $existingTitles = SpyWordGroup::where('pack_slug', $canonicalPack)->pluck('title_ar')->all();
         $existingTitlesStr = implode('، ', array_slice($existingTitles, -10));
+
+        $packDesc = match ($canonicalPack) {
+            'foods' => 'أكلات ومأكولات وحلويات ومشروبات مصرية مشهورة',
+            'movies' => 'أعمال فنية وأفلام ومسرحيات ومسلسلات مصرية شهيرة',
+            default => 'أماكن ومعالم وشوارع ومحافظات وميادين مصرية معروفة',
+        };
 
         $prompt = <<<EOT
 أنت مصمم للعبة "مين الجاسوس" المصرية.
-قم بتوليد **مجموعة كلمات مترابطة ومتجانسة بدقة بالغة** (Word Group) في فئة [{$packSlug}] ومستوى صعوبة [{$difficulty}].
+قم بتوليد **مجموعة كلمات مترابطة ومتجانسة بدقة بالغة** (Word Group) في فئة [{$canonicalPack}] ({$packDesc}) ومستوى صعوبة [{$difficulty}].
 
-شرط جوهري لا يقبل المساومة:
-- المجموعة يجب أن تتكون من عنوان واضح ومحدد (مثل: "مدن ساحلية مصرية"، "أكلات فطار شعبي"، "غرف في الشقة"، "معالم سياحية بالقاهرة"، "حلويات شرقية").
-- **جميع الكلمات (من 8 إلى 12 كلمة) يجب أن تكون من نفس النوع ونفس مستوى التحديد تماماً**!
-- ممنوع منعاً باتاً خلط المستويات (ممنوع وضع غرفة مثل "مطبخ" بجانب مدينة مثل "شرم الشيخ"، وممنوع وضع أثاث مع أماكن).
-- تجنب المجموعات الموجودة مسبقاً مثل: [{$existingTitlesStr}].
+شروط حاسمة:
+1. المجموعة يجب أن تكون متجانسة تماماً من نفس الفئة المعرفية ونفس مستوى التحديد (مثال: إذا كانت معالم، فكلها معالم؛ إذا كانت مدن، فكلها مدن؛ إذا كانت حلويات، فكلها حلويات).
+2. ممنوع إدخال كلمات من فئات أخرى (ممنوع إدخال طعام في الأماكن، أو أفلام في الأكلات).
+3. تجنب تكرار هذه العناوين الموجودة مسبقاً: [{$existingTitlesStr}].
 
 الرد بصيغة JSON فقط:
 {
@@ -346,7 +314,7 @@ EOT;
         }
 
         $group = SpyWordGroup::create([
-            'pack_slug' => $packSlug,
+            'pack_slug' => $canonicalPack,
             'title_ar' => $titleAr,
             'theme' => $data['theme'] ?? $titleAr,
             'difficulty' => in_array($difficulty, ['easy', 'medium', 'hard']) ? $difficulty : 'medium',

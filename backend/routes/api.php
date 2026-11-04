@@ -27,9 +27,12 @@ Route::prefix('v1')->middleware(['throttle:60,1'])->group(function () {
     Route::post('/rooms/{roomCode}/join', [RoomContentController::class, 'joinRoom']);
     Route::post('/rooms/{roomCode}/leave', [RoomContentController::class, 'leaveRoom']);
     Route::get('/rooms/{roomCode}/next-question', [RoomContentController::class, 'getNextQuestion']);
+    Route::get('/rooms/{roomCode}/next-questions-batch', [RoomContentController::class, 'getNextQuestionsBatch']);
     Route::post('/rooms/{roomCode}/grade-question', [RoomContentController::class, 'gradeQuestion']);
     Route::get('/rooms/{roomCode}/next-spy-round', [RoomContentController::class, 'getNextSpyRound']);
+    Route::get('/rooms/{roomCode}/next-spy-batch', [RoomContentController::class, 'getNextSpyBatch']);
     Route::get('/rooms/{roomCode}/next-charades', [RoomContentController::class, 'getNextCharades']);
+    Route::get('/rooms/{roomCode}/next-charades-batch', [RoomContentController::class, 'getNextCharadesBatch']);
 
     // البلاغات ومزامنة المحتوى
     Route::post('/content/report', [ContentReportController::class, 'report']);

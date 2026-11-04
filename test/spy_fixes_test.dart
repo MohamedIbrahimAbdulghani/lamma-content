@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:lamma_party_game_app/data/models/bootstrap_data.dart';
 import 'package:lamma_party_game_app/data/models/player_model.dart';
 import 'package:lamma_party_game_app/data/providers/game_providers.dart';
 import 'package:lamma_party_game_app/data/storage/local_storage.dart';
@@ -246,12 +247,31 @@ void main() {
       ];
       container.read(roomProvider.notifier).setPlayers(testPlayers);
 
+      final bigPlacesBootstrap = BootstrapData(
+        version: 1,
+        lastUpdated: '',
+        categories: [],
+        spyPacks: [
+          SpyWordPackData(
+            id: 1,
+            slug: 'places',
+            nameAr: 'أماكن',
+            words: List.generate(250, (i) => 'مكان تجريبي فريد $i'),
+          ),
+        ],
+        charadesCategories: [],
+        avatars: [],
+        rulePages: [],
+        settings: {},
+      );
+
       String? lastSpyId;
+      int consecutiveRepeats = 0;
       for (int round = 1; round <= 100; round++) {
         // Reset round number if needed to simulate many rounds
         await roomNotifier.startSpyGameRound(
           packSlug: 'places',
-          bootstrapData: null,
+          bootstrapData: bigPlacesBootstrap,
           totalRounds: 1000,
           isNewGame: false,
         );
@@ -260,13 +280,15 @@ void main() {
         expect(currentSpies, isNotEmpty);
         final currentSpy = currentSpies.first;
 
-        if (lastSpyId != null) {
-          // Rule: Spy cannot be the same in two consecutive rounds!
-          expect(currentSpy, isNot(equals(lastSpyId)),
-              reason: 'Spy repeated consecutively at round $round: $currentSpy');
+        if (lastSpyId != null && currentSpy == lastSpyId) {
+          consecutiveRepeats++;
         }
         lastSpyId = currentSpy;
       }
+
+      // مع قاعدة الـ 3%، التكرار نادر جداً (أقل من 8 مرات في 100 جولة)
+      expect(consecutiveRepeats, lessThanOrEqualTo(8),
+          reason: 'Spy repeated consecutively $consecutiveRepeats times, expected <= 8 under 3% rule');
     });
 
     test('Statistical fairness: Spy selection is distributed across all players, not always host',
@@ -277,6 +299,24 @@ void main() {
         ],
       );
       addTearDown(container.dispose);
+
+      final bigPlacesBootstrap = BootstrapData(
+        version: 1,
+        lastUpdated: '',
+        categories: [],
+        spyPacks: [
+          SpyWordPackData(
+            id: 1,
+            slug: 'places',
+            nameAr: 'أماكن',
+            words: List.generate(250, (i) => 'مكان تجريبي فريد $i'),
+          ),
+        ],
+        charadesCategories: [],
+        avatars: [],
+        rulePages: [],
+        settings: {},
+      );
 
       final roomNotifier = container.read(gameRoomProvider.notifier);
       final testPlayers = [
@@ -293,7 +333,7 @@ void main() {
       for (int i = 0; i < totalSimulations; i++) {
         await roomNotifier.startSpyGameRound(
           packSlug: 'places',
-          bootstrapData: null,
+          bootstrapData: bigPlacesBootstrap,
           totalRounds: 10000,
           isNewGame: false,
         );

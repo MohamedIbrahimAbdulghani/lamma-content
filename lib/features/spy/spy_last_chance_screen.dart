@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/countdown_ring.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/providers/game_providers.dart';
 
 class SpyLastChanceScreen extends ConsumerStatefulWidget {
@@ -142,16 +143,15 @@ class _SpyLastChanceScreenState extends ConsumerState<SpyLastChanceScreen> {
     final totalSeconds = settings.guessSeconds > 0 ? settings.guessSeconds : 15;
     final progress = _secondsLeft / totalSeconds;
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.pop(),
-        ),
-        title: Consumer(
+    return GameBackScope(
+      onCleanup: () => _timer?.cancel(),
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: const GameBackButton(),
+          title: Consumer(
           builder: (context, ref, _) {
             final roomState = ref.watch(gameRoomProvider);
             return Text(
@@ -253,6 +253,7 @@ class _SpyLastChanceScreenState extends ConsumerState<SpyLastChanceScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }

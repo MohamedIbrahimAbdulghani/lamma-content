@@ -7,6 +7,7 @@ import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
 import '../../core/widgets/stepper_row.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
 import 'ai_generation_sheet.dart';
 
 class HostSettingsSpyScreen extends ConsumerWidget {
@@ -191,7 +192,17 @@ class HostSettingsSpyScreen extends ConsumerWidget {
                 title: 'حفظ وارجع للوبي',
                 icon: Icons.check,
                 accentColor: AppTheme.accentCoral,
-                onPressed: () => context.pop(),
+                onPressed: () {
+                  final current = ref.read(spySettingsProvider);
+                  ref.read(gameRoomProvider.notifier).server?.updateSettings({
+                    'spy': current.toJson(),
+                  });
+                  ref.read(gameContentServiceProvider).autoReplenishSpyIfNeeded(
+                    requiredCount: current.rounds,
+                    packSlug: current.wordPack,
+                  );
+                  context.pop();
+                },
               ),
               const SizedBox(height: 12),
             ],

@@ -1,6 +1,4 @@
-// Lamma - by Mohamed Ibrahim
-
-import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +9,7 @@ import '../models/player_model.dart';
 import '../models/question_model.dart';
 import '../storage/local_storage.dart';
 import '../services/game_content_service.dart';
+import '../../features/spy/domain/spy_selector.dart';
 import '../../net/server/room_server.dart';
 import '../../net/client/room_client.dart';
 
@@ -759,12 +758,27 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
 
     List<String> spyChoices = [];
 
+    // 0. الاستهلاك الفوري للتجهيز المسبق إن وجد (0ms)
     if (_ref != null && state.roomCode.isNotEmpty) {
+      try {
+        final contentService = _ref.read(gameContentServiceProvider);
+        final prebuffered = contentService.consumePrebufferedSpyRound(state.roomCode);
+        if (prebuffered != null && prebuffered['secret_word'] != null) {
+          pickedWord = prebuffered['secret_word'] as String;
+          categoryTitle = prebuffered['group_title_ar'] as String? ?? categoryTitle;
+          spyChoices = (prebuffered['spy_choices'] as List<dynamic>? ?? []).map((e) => e.toString()).toList();
+        }
+      } catch (_) {}
+    }
+
+    if (pickedWord == null && _ref != null && state.roomCode.isNotEmpty) {
       try {
         final api = _ref.read(apiClientProvider);
         final spyData = await api.fetchNextSpyRound(
           state.roomCode,
           pack: packSlug,
+          previousWord: state.secretWord,
+          seenWordHashes: _server?.getAllSeenSpyHashes().toList() ?? const [],
         );
         if (spyData != null && spyData['secret_word'] != null) {
           pickedWord = spyData['secret_word'] as String;
@@ -774,54 +788,48 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       } catch (_) {}
     }
 
+    String? spyFailureReason;
     if (pickedWord == null && _ref != null) {
       try {
         final contentService = _ref.read(gameContentServiceProvider);
         pickedWord = await contentService.getNextSpyWord(
           packSlug: packSlug,
           bootstrapData: bootstrapData,
+          previousWord: state.secretWord,
           externalSeenHashes: _server?.getAllSeenSpyHashes(),
         );
-      } catch (_) {}
+      } catch (e) {
+        if (e is InsufficientSpyWordsException) {
+          spyFailureReason = e.failureReason;
+        }
+      }
     }
 
     if (pickedWord == null) {
-      List<String> packWords = [];
-      if (bootstrapData != null) {
-        for (final pack in bootstrapData.spyPacks) {
-          if (pack.slug == packSlug || packSlug == 'mixed') {
-            packWords.addAll(pack.words);
-            categoryTitle = pack.nameAr;
-          }
-        }
-      }
+      // ممنوع التدوير الصامت للأقدم مشاهدة عند نفاد الكلمات
+      throw InsufficientSpyWordsException(pack: packSlug, failureReason: spyFailureReason);
+    }
 
-      if (packWords.isEmpty) {
-        if (packSlug == 'movies') {
-          categoryTitle = 'أفلام';
-          packWords = [
-            'الكيف',
-            'الفرح',
-            'الناظر',
-            'عسل أسود',
-            'إبراهيم الأبيض',
-          ];
-        } else if (packSlug == 'food') {
-          categoryTitle = 'أكلات';
-          packWords = ['كشري', 'ملوخية بالأرانب', 'حمام محشي', 'فول وطعمية'];
-        } else {
-          categoryTitle = 'أماكن';
-          packWords = [
-            'خان الخليلي',
-            'شاطئ المعمورة',
-            'مطار القاهرة',
-            'برج القاهرة',
-          ];
-        }
-      }
+    // تجهيز مسبق للجولات التالية في الخلفية بدون حجب
+    if (_ref != null && state.roomCode.isNotEmpty) {
+      final contentService = _ref.read(gameContentServiceProvider);
+      unawaited(
+        contentService.prebufferNextSpyGame(
+          roomCode: state.roomCode,
+          rounds: targetTotalRounds,
+          packSlug: packSlug,
+        ),
+      );
+    }
 
-      packWords.shuffle(Random.secure());
-      pickedWord = packWords.first;
+    // تسجيل الجولة فوراً كمشاهدة لدى جميع الحاضرين لحظة التقديم
+    if (_ref != null) {
+      final contentService = _ref.read(gameContentServiceProvider);
+      await contentService.markSpyRoundPresented(
+        pickedWord,
+        spyChoices: spyChoices,
+        roomServer: _server,
+      );
     }
 
     // تجهيز قائمة اللاعبين
@@ -852,37 +860,19 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       neededSpies = 1;
     }
 
-    // 2. تطبيق قاعدة منع التكرار: استبعاد جواسيس الجولة السابقة
-    List<PlayerModel> eligible = active
-        .where((p) => !state.previousSpyIds.contains(p.id))
-        .toList();
-
-    // حالات خاصة: لو لم يكن هناك مؤهلون كافون (لاعب وحيد، أو الجميع كانوا جواسيس، أو غادر لاعبون)
-    if (eligible.length < neededSpies) {
-      if (active.length == 1) {
-        eligible = active;
-        neededSpies = 1;
-      } else {
-        // نخفف القيد بأقل قدر ممكن بإضافة باقي اللاعبين النشطين
-        final remaining = active.where((p) => !eligible.contains(p)).toList()
-          ..shuffle(Random.secure());
-        eligible = [...eligible, ...remaining];
-      }
-    }
-
-    // 3. اختيار الجاسوس/الجواسيس عشوائياً بعدالة تامة باستخدام Random.secure()
-    final secureRandom = Random.secure();
-    final shuffledEligible = [...eligible]..shuffle(secureRandom);
-    final chosenSpyIds = shuffledEligible
-        .take(neededSpies)
-        .map((p) => p.id)
-        .toList();
+    // 2. تطبيق قاعدة منع التكرار مع احتمال الاستثناء (3%) واختيار الجواسيس
+    final chosenSpyIds = SpySelector.selectSpyIds(
+      activePlayers: active,
+      previousSpyIds: state.previousSpyIds,
+      neededSpies: neededSpies,
+    );
 
     final updatedPlayers = playersList.map((p) {
+      final base = isNewGame ? p.copyWith(score: 0) : p;
       if (chosenSpyIds.contains(p.id)) {
-        return p.copyWith(role: 'spy', currentWord: null);
+        return base.copyWith(role: 'spy', currentWord: null);
       } else {
-        return p.copyWith(role: 'citizen', currentWord: pickedWord);
+        return base.copyWith(role: 'citizen', currentWord: pickedWord);
       }
     }).toList();
 
@@ -1006,6 +996,28 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       questionNumber: data['question_number'] as int? ?? state.questionNumber,
       totalQuestions: data['total_questions'] as int? ?? state.totalQuestions,
     );
+
+    // مزامنة إعدادات اللعبة (مثل عدد الكلمات في الدور) مع باقي اللاعبين
+    if (data['settings'] != null) {
+      final netSettings = data['settings'] as Map<String, dynamic>;
+      final charadesMap = netSettings['charades'] as Map<String, dynamic>?;
+      final wpt = charadesMap != null
+          ? (charadesMap['wordsPerTurn'] as int?)
+          : (netSettings['words_per_turn'] as int?);
+      final rSec = charadesMap != null
+          ? (charadesMap['roundSeconds'] as int?)
+          : (netSettings['round_seconds'] as int?);
+      final cat = charadesMap != null
+          ? (charadesMap['category'] as String?)
+          : (netSettings['category'] as String?);
+      if (wpt != null || rSec != null || cat != null) {
+        _ref?.read(charadesSettingsProvider.notifier).update(
+          wordsPerTurn: wpt,
+          roundSeconds: rSec,
+          category: cat,
+        );
+      }
+    }
   }
 
   void showStrikeToast(String message) {
@@ -1102,8 +1114,11 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
     );
   }
 
-  /// بنعمل reset لبيانات الجاسوس عشان الجولة الجديدة
+  /// بنعمل reset لبيانات الجاسوس عشان الجولة الجديدة مع الحفاظ على جاسوس الجولة السابقة
   void resetSpyRound() {
+    final prevSpies = state.previousSpyIds.isNotEmpty
+        ? state.previousSpyIds
+        : state.spyPlayerIds;
     state = ActiveRoomState(
       roomCode: state.roomCode,
       hostIp: state.hostIp,
@@ -1113,11 +1128,47 @@ class RoomNotifier extends StateNotifier<ActiveRoomState> {
       currentPhase: 'lobby',
       currentRound: 1,
       totalRounds: state.totalRounds,
-      previousSpyIds: const [],
+      previousSpyIds: prevSpies,
       players: state.players
           .map((p) => p.copyWith(score: 0, role: null, currentWord: null))
           .toList(),
       myPlayerId: state.myPlayerId,
+    );
+  }
+
+  /// المضيف: إلغاء الجولة الحالية فوراً وبلا نقاط والعودة لحالة اللوبي عند الجميع
+  void hostReturnToLobby() {
+    if (!state.isHost) return;
+    _server?.returnToLobby();
+    state = state.copyWith(
+      currentPhase: 'lobby',
+      timerSeconds: 0,
+      currentQuestion: null,
+      triviaQuestions: [],
+      secretWord: '',
+      secretCategory: '',
+      spyChoices: [],
+      votedPlayerId: null,
+      spyOutcome: SpyGameOutcome.none,
+      isStartingRound: false,
+      players: state.players
+          .map((p) => p.copyWith(role: null, currentWord: null))
+          .toList(),
+    );
+  }
+
+  /// اللاعب العادي: مغادرة الغرفة وإشعار الخادم وتحديث القائمة عند الجميع
+  Future<void> playerLeaveRoom() async {
+    if (state.isHost) {
+      await _server?.stop();
+      _server = null;
+    } else {
+      _client?.leaveRoom();
+      _client = null;
+    }
+    state = ActiveRoomState(
+      selectedGame: state.selectedGame,
+      gameMode: state.gameMode,
     );
   }
 

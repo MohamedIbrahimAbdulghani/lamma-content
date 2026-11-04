@@ -342,21 +342,26 @@ void main() {
       expect(questions.length, equals(5), reason: 'تم جلب الأسئلة من المخزون المحلي دون توقف');
     });
 
-    test('مين الجاسوس لا تعيد null إطلاقاً حتى لو شوهدت كل الكلمات', () async {
+    test('مين الجاسوس لا تعيد تدوير الكلمات صامتاً بل ترجع null عند النفاد', () async {
       final prefs = await SharedPreferences.getInstance();
       final storage = LocalStorage(prefs);
       final apiClient = ApiClient(storage);
 
       final contentService = GameContentService(apiClient, storage);
 
-      // استهلاك كلمات متعددة متتالية
-      for (int i = 0; i < 30; i++) {
+      // استهلاك كلمات الحزمة
+      String? lastWord;
+      for (int i = 0; i < 20; i++) {
         final word = await contentService.getNextSpyWord(packSlug: 'places');
-        expect(word, isNotNull);
-        expect(word, isNotEmpty);
+        if (word != null) {
+          lastWord = word;
+          await contentService.markSpyRoundPresented(word);
+        }
       }
 
-      expect(contentService.hasRecycledSpy, isTrue, reason: 'عند نفاد الكلمات يُعاد التدوير دون كراش');
+      // بعد استهلاك كل الكلمات غير المشاهدة: يجب أن ترجع null منعاً للتدوير الصامت
+      final exhaustedWord = await contentService.getNextSpyWord(packSlug: 'places');
+      expect(exhaustedWord, isNull, reason: 'عند نفاد الكلمات يجب عدم التدوير الصامت بل إرجاع null');
     });
   });
 
@@ -426,6 +431,7 @@ void main() {
           final norm = ArabicTextNormalizer.normalize(w);
           expect(seenAcrossRounds.contains(norm), isFalse, reason: 'الكلمة $w تكررت في الجولة $round');
           seenAcrossRounds.add(norm);
+          await contentService.markCharadesWordPresented(w);
         }
       }
 
@@ -523,7 +529,7 @@ void main() {
           child: const MaterialApp(
             home: Scaffold(
               body: SingleChildScrollView(
-                child: AiGenerationSheet(gameType: 'trivia'),
+                child: AiGenerationSheet(gameType: 'all'),
               ),
             ),
           ),
@@ -533,7 +539,7 @@ void main() {
 
       // التأكد من ظهور شاشة المزامنة المستقلة
       expect(find.text('تحديث ومزامنة المحتوى الذكي ⚡'), findsOneWidget);
-      final syncBtn = find.text('تحديث وتعويض المخزون الآن 🔄');
+      final syncBtn = find.text('توليد وتعويض المخزون الآن ⚡');
       expect(syncBtn, findsOneWidget);
       expect(find.text('تم، جاهز للعب 🚀'), findsOneWidget);
 

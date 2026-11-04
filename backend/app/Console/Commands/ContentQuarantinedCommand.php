@@ -29,15 +29,16 @@ class ContentQuarantinedCommand extends Command
             $rows = [];
             foreach ($questions as $q) {
                 $reports = ContentReport::where('content_type', 'trivia')->where('content_id', $q->id)->pluck('reason')->all();
+                $reasonDisplay = $q->rejection_reason ?: (!empty($reports) ? implode(' | ', array_slice($reports, -2)) : 'عزل للمراجعة');
                 $rows[] = [
                     $q->id,
                     $q->category?->name_ar ?? 'عام',
-                    mb_substr($q->prompt_ar, 0, 40) . '..',
+                    mb_substr($q->prompt_ar, 0, 45) . '..',
                     $q->reports_count,
-                    implode(' | ', array_slice($reports, -3)),
+                    $reasonDisplay,
                 ];
             }
-            $this->table(['ID', 'القسم', 'نص السؤال', 'عدد البلاغات', 'أسباب البلاغ'], $rows);
+            $this->table(['ID', 'القسم', 'نص السؤال', 'عدد البلاغات', 'سبب العزل / البلاغ'], $rows);
         }
 
         // 2. مجموعات الجاسوس المعزولة

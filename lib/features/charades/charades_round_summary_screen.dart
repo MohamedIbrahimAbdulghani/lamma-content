@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import 'controllers/charades_controller.dart';
 
 class CharadesRoundSummaryScreen extends ConsumerWidget {
@@ -23,22 +24,29 @@ class CharadesRoundSummaryScreen extends ConsumerWidget {
     final isLastRound = charadesState.currentRound >= charadesState.totalRounds;
     final willCompleteGame = isLastPlayer && isLastRound;
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Text(
-                'خلص دور $currentPlayerName!',
-                style: const TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+    return GameBackScope(
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const GameBackCircularButton(),
+                    Text(
+                      'خلص دور $currentPlayerName!',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 40),
+                  ],
                 ),
-              ),
               const SizedBox(height: 8),
               Text(
                 '$correctCount كلمات صح 🎉',
@@ -174,6 +182,7 @@ class CharadesRoundSummaryScreen extends ConsumerWidget {
           ),
         ),
       ),
+    ),
     );
   }
 

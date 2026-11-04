@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
 import 'controllers/charades_controller.dart';
@@ -58,22 +59,30 @@ class _CharadesSpectatorScreenState extends ConsumerState<CharadesSpectatorScree
     final seconds = (_secondsLeft % 60).toString().padLeft(2, '0');
     final charadesState = ref.watch(charadesGameProvider);
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Text(
-                '$activePlayer بيمثّل دلوقتي',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+    return GameBackScope(
+      onCleanup: () => _timer?.cancel(),
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const GameBackCircularButton(),
+                    Text(
+                      '$activePlayer بيمثّل دلوقتي',
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 40),
+                  ],
                 ),
-              ),
               if (charadesState.isWordsLimitEnabled) ...[
                 const SizedBox(height: 8),
                 Container(
@@ -166,6 +175,7 @@ class _CharadesSpectatorScreenState extends ConsumerState<CharadesSpectatorScree
           ),
         ),
       ),
+    ),
     );
   }
 }

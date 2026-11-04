@@ -3,13 +3,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/utils/arabic_text_normalizer.dart';
 import '../../data/models/player_model.dart';
 import '../../data/models/question_model.dart';
+import '../../features/spy/domain/spy_selector.dart';
 import '../../features/trivia/domain/trivia_scorer.dart';
 import '../protocol/game_message.dart';
 
@@ -41,6 +41,7 @@ class RoomServer {
   String _secretCategory = '';
   List<String> _spyChoices = [];
   List<String> _spyPlayerIds = [];
+  List<String> _previousSpyIds = [];
   int _currentRound = 1;
   int _totalRounds = 3;
   final Map<String, int> _votes = {}; // voterId -> targetPlayerId
@@ -386,28 +387,71 @@ class RoomServer {
           case 'heartbeat':
             // keep-alive ack
             break;
+
+          case 'leave_room':
+            final id = clientId;
+            if (id != null) {
+              removePlayer(id);
+            }
+            break;
         }
       },
       onDone: () {
-        if (clientId != null) {
-          _clients.remove(clientId);
-          // لو اللاعب خرج وهو في اللوبي، نحذفه من قائمة اللاعبين ونبلغ الباقيين
-          if (_currentPhase == 'lobby') {
-            _players.removeWhere((p) => p.id == clientId && !p.isHost);
-          }
-          _broadcastState();
+        final id = clientId;
+        if (id != null) {
+          removePlayer(id);
         }
       },
       onError: (_) {
-        if (clientId != null) {
-          _clients.remove(clientId);
-          if (_currentPhase == 'lobby') {
-            _players.removeWhere((p) => p.id == clientId && !p.isHost);
-          }
-          _broadcastState();
+        final id = clientId;
+        if (id != null) {
+          removePlayer(id);
         }
       },
     );
+  }
+
+  /// إزالة لاعب عند مغادرته الغرفة وإبلاغ الجميع، مع فحص الحد الأدنى للاعبين
+  void removePlayer(String playerId) {
+    _clients.remove(playerId);
+    _players.removeWhere((p) => p.id == playerId && !p.isHost);
+    _playerSeenTriviaPrompts.remove(playerId);
+    _playerSeenTriviaAnswers.remove(playerId);
+    _playerSeenSpyWords.remove(playerId);
+    _playerSeenCharadesWords.remove(playerId);
+
+    // التحقق أثناء اللعب: إذا أصبح عدد اللاعبين النشطين غير كافٍ لقاعدة اللعبة
+    if (_currentPhase != 'lobby') {
+      final active = _players.where((p) => !p.isKicked).toList();
+      final minRequired = _gameMode == 'spy' ? 3 : 2;
+      if (active.length < minRequired) {
+        returnToLobby();
+        return;
+      }
+    }
+
+    _broadcastState();
+  }
+
+  /// إلغاء الجولة والعودة للوبي فوراً مع إلغاء المؤقتات وبث الحالة للجميع
+  void returnToLobby() {
+    _gameTimer?.cancel();
+    _gameTimer = null;
+    _currentPhase = 'lobby';
+    _timerSeconds = 0;
+    _votes.clear();
+    _answers.clear();
+    _answerTimes.clear();
+
+    // تصفير الأدوار والكلمات الحالية للجولة الملغاة مع الاحتفاظ باللاعبين
+    for (int i = 0; i < _players.length; i++) {
+      _players[i] = _players[i].copyWith(
+        role: null,
+        currentWord: null,
+      );
+    }
+
+    _broadcastState();
   }
 
   void _handlePlayerIntent(String playerId, String action, Map<String, dynamic> payload) {
@@ -490,11 +534,19 @@ class RoomServer {
     _secretCategory = categoryName;
     _spyChoices = spyChoices ?? [];
 
-    // تسجيل بصمة الكلمة في سجلات جميع اللاعبين الحاضرين
+    // تسجيل بصمة الكلمة والخيارات في سجلات جميع اللاعبين الحاضرين
     final spyWordHash = ArabicTextNormalizer.wordHash(secretWord);
     if (spyWordHash.isNotEmpty) {
       for (final set in _playerSeenSpyWords.values) {
         set.add(spyWordHash);
+      }
+    }
+    for (final choice in _spyChoices) {
+      final chHash = ArabicTextNormalizer.wordHash(choice);
+      if (chHash.isNotEmpty) {
+        for (final set in _playerSeenSpyWords.values) {
+          set.add(chHash);
+        }
       }
     }
     _gameMode = 'spy';
@@ -509,10 +561,13 @@ class RoomServer {
     if (spyPlayerIds != null && spyPlayerIds.isNotEmpty) {
       _spyPlayerIds = spyPlayerIds;
     } else {
-      final random = Random.secure();
-      final spyIndex = random.nextInt(activePlayers.length);
-      _spyPlayerIds = [activePlayers[spyIndex].id];
+      _spyPlayerIds = SpySelector.selectSpyIds(
+        activePlayers: activePlayers,
+        previousSpyIds: _previousSpyIds,
+        neededSpies: 1,
+      );
     }
+    _previousSpyIds = List.from(_spyPlayerIds);
 
     for (int i = 0; i < _players.length; i++) {
       final p = _players[i];
@@ -547,18 +602,6 @@ class RoomServer {
   void startTriviaGame(List<QuestionModel> questions, {int timePerQuestion = 15}) {
     _triviaQuestions = questions;
     _triviaTimePerQuestion = timePerQuestion;
-
-    // تسجيل بصمات الأسئلة المعروضة في سجلات جميع اللاعبين الحاضرين
-    for (final q in questions) {
-      final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
-      final aHash = ArabicTextNormalizer.triviaAnswerHash(q.categorySlug, q.options[q.correctIndex]);
-      for (final set in _playerSeenTriviaPrompts.values) {
-        set.add(pHash);
-      }
-      for (final set in _playerSeenTriviaAnswers.values) {
-        set.add(aHash);
-      }
-    }
     _gameSettings['time_per_question'] = timePerQuestion;
     _currentTriviaIndex = 0;
     _gameMode = 'trivia';
@@ -585,6 +628,12 @@ class RoomServer {
       _broadcastState();
       return;
     }
+
+    // تسجيل السؤال لحظة تقديمه الفعلي فقط في سجلات جميع اللاعبين الحاضرين
+    final curQ = _triviaQuestions[_currentTriviaIndex];
+    final pHash = ArabicTextNormalizer.triviaQuestionHash(curQ.promptAr);
+    final aHash = ArabicTextNormalizer.triviaAnswerHash(curQ.categorySlug, curQ.options[curQ.correctIndex]);
+    recordSeenTriviaAcrossRoom([pHash], [aHash]);
 
     _currentPhase = 'trivia_question';
     _timerSeconds = _triviaTimePerQuestion;

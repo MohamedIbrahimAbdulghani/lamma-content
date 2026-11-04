@@ -288,5 +288,110 @@ void main() {
         }
       },
     );
+
+    test(
+      '7. انتهاء الدور بانتهاء الوقت أيهما أسبق (قبل الوصول للعدد المختار من الكلمات)',
+      () async {
+        final container = ProviderContainer(
+          overrides: [
+            sharedPreferencesProvider.overrideWithValue(prefs),
+            localStorageProvider.overrideWithValue(storage),
+            gameContentServiceProvider.overrideWithValue(contentService),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final notifier = container.read(charadesGameProvider.notifier);
+        // نحدد 20 كلمة ولكن الوقت ثانية واحدة فقط
+        await notifier.initGame(
+          roundsPerPlayer: 1,
+          roundSeconds: 1,
+          wordsPerTurn: 20,
+        );
+
+        notifier.startRound();
+        var state = container.read(charadesGameProvider);
+        expect(state.isRoundActive, isTrue);
+
+        // جاوب كلمة واحدة فقط
+        notifier.markCorrect();
+        state = container.read(charadesGameProvider);
+        expect(state.wordsAttemptedInRound, equals(1));
+        expect(state.isWordsLimitReached, isFalse);
+
+        // ننتظر ثانية وربع لانتهاء مؤقت الجولة
+        await Future.delayed(const Duration(milliseconds: 1200));
+
+        state = container.read(charadesGameProvider);
+        // الدور ينتهي بانتهاء الوقت أسبق من الكلمات
+        expect(state.isRoundActive, isFalse);
+        expect(state.secondsLeft, equals(0));
+        expect(state.wordsAttemptedInRound, equals(1));
+      },
+    );
+
+    test(
+      '8. مزامنة إعداد wordsPerTurn مع باقي اللاعبين عبر الشبكة دون تعديلهم لها',
+      () async {
+        final container = ProviderContainer(
+          overrides: [
+            sharedPreferencesProvider.overrideWithValue(prefs),
+            localStorageProvider.overrideWithValue(storage),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final roomNotifier = container.read(gameRoomProvider.notifier);
+
+        // محاكاة وصول رسالة تحديث إعدادات من المضيف عبر السيرفر
+        roomNotifier.updateFromNetwork({
+          'settings': {
+            'words_per_turn': 15,
+            'round_seconds': 90,
+            'category': 'actions',
+          },
+        });
+
+        final clientSettings = container.read(charadesSettingsProvider);
+        expect(clientSettings.wordsPerTurn, equals(15));
+        expect(clientSettings.roundSeconds, equals(90));
+        expect(clientSettings.category, equals('actions'));
+      },
+    );
+
+    test(
+      '9. ملخص الدور يحسب بدقة المعروضة وعرفوها وتخطي وإخفاء العدّاد عند "مفتوح"',
+      () {
+        // حالة مع حد 10 كلمات
+        const limitedState = CharadesGameState(
+          wordsPerTurn: 10,
+          roundHistory: [
+            {'word': 'الناظر', 'correct': true},
+            {'word': 'الكيف', 'correct': false},
+            {'word': 'بوحة', 'correct': true},
+          ],
+        );
+
+        expect(limitedState.isWordsLimitEnabled, isTrue);
+        expect(limitedState.wordsAttemptedInRound, equals(3));
+        expect(limitedState.correctCountInRound, equals(2));
+        expect(limitedState.passedCountInRound, equals(1));
+        expect(limitedState.currentWordNumberInTurn, equals(4));
+
+        // حالة مفتوح (بلا حد = 0)
+        const openState = CharadesGameState(
+          wordsPerTurn: 0,
+          roundHistory: [
+            {'word': 'الناظر', 'correct': true},
+            {'word': 'الكيف', 'correct': false},
+          ],
+        );
+
+        expect(openState.isWordsLimitEnabled, isFalse);
+        expect(openState.wordsAttemptedInRound, equals(2));
+        expect(openState.correctCountInRound, equals(1));
+        expect(openState.passedCountInRound, equals(1));
+      },
+    );
   });
 }

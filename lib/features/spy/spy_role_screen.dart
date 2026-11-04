@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/providers/game_providers.dart';
 
 class SpyRoleScreen extends ConsumerStatefulWidget {
@@ -57,16 +58,15 @@ class _SpyRoleScreenState extends ConsumerState<SpyRoleScreen> {
     final secretWord = roomState.secretWord.isNotEmpty ? roomState.secretWord : 'خان الخليلي';
     final category = roomState.secretCategory.isNotEmpty ? roomState.secretCategory : 'أماكن';
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.go('/lobby'),
-        ),
-        title: Column(
+    return GameBackScope(
+      onCleanup: () => _progressTimer?.cancel(),
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: const GameBackButton(),
+          title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
@@ -142,6 +142,7 @@ class _SpyRoleScreenState extends ConsumerState<SpyRoleScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 

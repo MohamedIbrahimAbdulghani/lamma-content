@@ -32,34 +32,46 @@ class ContentReportController extends Controller
             'reason' => $reason,
         ]);
 
+        // عدد الأجهزة الفريدة المختلفة التي أبلغت عن هذا العنصر
+        $distinctDevices = ContentReport::where('content_type', $contentType)
+            ->where('content_id', $contentId)
+            ->distinct('device_id')
+            ->count('device_id');
+
         $quarantined = false;
 
         if ($contentType === 'trivia') {
             $item = Question::find($contentId);
             if ($item) {
-                $item->increment('reports_count');
-                if ($item->reports_count >= 2) {
-                    $item->update(['status' => 'quarantined', 'is_active' => false]);
+                $item->reports_count = $distinctDevices;
+                if ($distinctDevices >= 2) {
+                    $item->status = 'quarantined';
+                    $item->is_active = false;
+                    $item->rejection_reason = 'تم العزل تلقائياً بعد تلقي بلاغات من جهازين مختلفين عن خطأ في السؤال/الإجابة';
                     $quarantined = true;
                 }
+                $item->save();
             }
         } elseif ($contentType === 'spy_group') {
             $item = SpyWordGroup::find($contentId);
             if ($item) {
-                $item->increment('reports_count');
-                if ($item->reports_count >= 2) {
-                    $item->update(['status' => 'quarantined']);
+                $item->reports_count = $distinctDevices;
+                if ($distinctDevices >= 2) {
+                    $item->status = 'quarantined';
                     $quarantined = true;
                 }
+                $item->save();
             }
         } elseif ($contentType === 'charades') {
             $item = CharadesWord::find($contentId);
             if ($item) {
-                $item->increment('reports_count');
-                if ($item->reports_count >= 2) {
-                    $item->update(['status' => 'quarantined', 'is_active' => false]);
+                $item->reports_count = $distinctDevices;
+                if ($distinctDevices >= 2) {
+                    $item->status = 'quarantined';
+                    $item->is_active = false;
                     $quarantined = true;
                 }
+                $item->save();
             }
         }
 

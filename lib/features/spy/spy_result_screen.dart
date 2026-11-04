@@ -5,8 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
+import '../../core/widgets/honest_exhaustion_dialog.dart';
 
 class SpyResultScreen extends ConsumerWidget {
   const SpyResultScreen({super.key});
@@ -62,15 +65,13 @@ class SpyResultScreen extends ConsumerWidget {
       resultIcon = Icons.emoji_events;
     }
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.go('/lobby'),
-        ),
+    return GameBackScope(
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: const GameBackButton(),
         title: const Text(
           'النتيجة',
           style: TextStyle(
@@ -339,14 +340,41 @@ class SpyResultScreen extends ConsumerWidget {
                   onPressed: () async {
                     final settings = ref.read(spySettingsProvider);
                     final bootstrap = ref.read(bootstrapProvider);
-                    await ref.read(gameRoomProvider.notifier).startSpyGameRound(
-                      packSlug: settings.wordPack,
-                      bootstrapData: bootstrap.data,
-                      totalRounds: settings.rounds,
-                      isNewGame: false,
-                    );
-                    if (context.mounted) {
-                      context.go('/spy/role');
+                    final navContext = context;
+                    try {
+                      await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                        packSlug: settings.wordPack,
+                        bootstrapData: bootstrap.data,
+                        totalRounds: settings.rounds,
+                        isNewGame: false,
+                      );
+                      if (navContext.mounted) {
+                        navContext.go('/spy/role');
+                      }
+                    } on InsufficientSpyWordsException catch (e) {
+                      if (navContext.mounted) {
+                        await HonestExhaustionDialog.show(
+                          navContext,
+                          gameTitle: 'مين الجاسوس',
+                          reason: e.toString(),
+                          onReuseSeen: () async {
+                            Navigator.of(navContext, rootNavigator: true).pop();
+                            await ref.read(gameContentServiceProvider).resetAllHistory();
+                            if (!navContext.mounted) return;
+                            await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                              packSlug: settings.wordPack,
+                              bootstrapData: bootstrap.data,
+                              totalRounds: settings.rounds,
+                              isNewGame: false,
+                            );
+                            if (navContext.mounted) navContext.go('/spy/role');
+                          },
+                          onTryLater: () {
+                            Navigator.of(navContext, rootNavigator: true).pop();
+                            if (navContext.mounted) navContext.go('/lobby');
+                          },
+                        );
+                      }
                     }
                   },
                 ),
@@ -374,14 +402,53 @@ class SpyResultScreen extends ConsumerWidget {
                   onPressed: () async {
                     final settings = ref.read(spySettingsProvider);
                     final bootstrap = ref.read(bootstrapProvider);
-                    await ref.read(gameRoomProvider.notifier).startSpyGameRound(
-                      packSlug: settings.wordPack,
-                      bootstrapData: bootstrap.data,
-                      totalRounds: settings.rounds,
-                      isNewGame: true,
-                    );
-                    if (context.mounted) {
-                      context.go('/spy/role');
+                    final navContext = context;
+                    try {
+                      await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                        packSlug: settings.wordPack,
+                        bootstrapData: bootstrap.data,
+                        totalRounds: settings.rounds,
+                        isNewGame: true,
+                      );
+                      if (navContext.mounted) {
+                        navContext.go('/spy/role');
+                      }
+                    } on InsufficientSpyWordsException catch (e) {
+                      if (navContext.mounted) {
+                        await HonestExhaustionDialog.show(
+                          navContext,
+                          gameTitle: 'مين الجاسوس',
+                          reason: e.toString(),
+                          onRetry: () async {
+                            Navigator.of(navContext, rootNavigator: true).pop();
+                            try {
+                              await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                                packSlug: settings.wordPack,
+                                bootstrapData: bootstrap.data,
+                                totalRounds: settings.rounds,
+                                isNewGame: true,
+                              );
+                              if (navContext.mounted) navContext.go('/spy/role');
+                            } catch (_) {}
+                          },
+                          onReuseSeen: () async {
+                            Navigator.of(navContext, rootNavigator: true).pop();
+                            await ref.read(gameContentServiceProvider).resetAllHistory();
+                            if (!navContext.mounted) return;
+                            await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                              packSlug: settings.wordPack,
+                              bootstrapData: bootstrap.data,
+                              totalRounds: settings.rounds,
+                              isNewGame: true,
+                            );
+                            if (navContext.mounted) navContext.go('/spy/role');
+                          },
+                          onTryLater: () {
+                            Navigator.of(navContext, rootNavigator: true).pop();
+                            if (navContext.mounted) navContext.go('/lobby');
+                          },
+                        );
+                      }
                     }
                   },
                 ),
@@ -400,6 +467,7 @@ class SpyResultScreen extends ConsumerWidget {
           ),
         ),
       ),
+    ),
     );
   }
 }

@@ -53,7 +53,7 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
       ];
     }
 
-    // جلب كلمات بدون تكرار عبر GameContentService (بحد أقصى أولي 30 كلمة لبدء سريع بدون تعليق)
+    // جلب كلمات بدون تكرار عبر GameContentService (استهلاك المجهز مسبقاً للغرفة فوراً)
     final neededWordsCount = (playersList.length * rounds * (wordsLimit > 0 ? wordsLimit : 10)).clamp(15, 30);
     final server = ref.read(gameRoomProvider.notifier).server;
     final pool = await contentService.getCharadesWords(
@@ -61,6 +61,7 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
       category: cat,
       bootstrapData: bootstrap.data,
       externalSeenHashes: server?.getAllSeenCharadesHashes(),
+      roomCode: roomState.roomCode,
     );
 
     state = CharadesGameState(
@@ -79,23 +80,55 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
       wordsPerTurn: wordsLimit,
     );
 
+    // إطلاق تجهيز مسبق في الخلفية للجولة التالية أثناء بدء الجولة الأولى
+    if (roomState.roomCode.isNotEmpty) {
+      unawaited(contentService.prebufferNextCharadesGame(
+        roomCode: roomState.roomCode,
+        count: neededWordsCount,
+        category: cat,
+        externalSeenHashes: server?.getAllSeenCharadesHashes(),
+      ));
+    }
+
     ref.read(gameRoomProvider.notifier).setPlayers(playersList);
   }
 
-  /// إعادة تشغيل اللعبة بكلمات جديدة وتصفير السكور
-  Future<void> restartGame() async {
+  /// إعادة تشغيل اللعبة بكلمات جديدة وتصفير السكور فوراً مع احترام الإعدادات المحفوظة
+  Future<void> restartGame({
+    String? category,
+    int? roundSeconds,
+    int? roundsPerPlayer,
+    int? wordsPerTurn,
+    List<PlayerModel>? initialPlayers,
+  }) async {
+    final server = ref.read(gameRoomProvider.notifier).server;
+    final playersToUse = initialPlayers ?? state.players.map((p) => p.copyWith(score: 0)).toList();
     await initGame(
-      initialPlayers: state.players.map((p) => p.copyWith(score: 0)).toList(),
-      roundSeconds: state.totalSeconds,
-      roundsPerPlayer: state.totalRounds,
-      wordsPerTurn: state.wordsPerTurn,
+      initialPlayers: playersToUse,
+      category: category,
+      roundSeconds: roundSeconds ?? state.totalSeconds,
+      roundsPerPlayer: roundsPerPlayer ?? state.totalRounds,
+      wordsPerTurn: wordsPerTurn ?? state.wordsPerTurn,
     );
+    if (server != null) {
+      server.startCharadesGame(
+        roundSeconds: roundSeconds ?? state.totalSeconds,
+        wordsPerTurn: wordsPerTurn ?? state.wordsPerTurn,
+      );
+    }
   }
 
   /// تحديث قائمة الفرق / اللاعبين قبل بدء اللعب
   void setRegisteredPlayers(List<PlayerModel> players) {
     state = state.copyWith(players: players);
     ref.read(gameRoomProvider.notifier).setPlayers(players);
+  }
+
+  void _recordWordPresented(String word) {
+    if (word.trim().isEmpty) return;
+    final contentService = ref.read(gameContentServiceProvider);
+    final server = ref.read(gameRoomProvider.notifier).server;
+    contentService.markCharadesWordPresented(word, roomServer: server);
   }
 
   /// بدء تايمر الجولة الحالية
@@ -106,6 +139,11 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
       roundHistory: [],
       isRoundActive: true,
     );
+
+    final curWord = state.currentWord;
+    if (curWord.isNotEmpty) {
+      _recordWordPresented(curWord);
+    }
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (state.secondsLeft > 1) {
@@ -174,6 +212,8 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
     final limitReached = state.wordsPerTurn > 0 && history.length >= state.wordsPerTurn;
     if (limitReached) {
       _timer?.cancel();
+    } else if (state.isRoundActive && nextIndex < state.words.length) {
+      _recordWordPresented(state.words[nextIndex]);
     }
 
     state = state.copyWith(
@@ -200,6 +240,8 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
     final limitReached = state.wordsPerTurn > 0 && history.length >= state.wordsPerTurn;
     if (limitReached) {
       _timer?.cancel();
+    } else if (state.isRoundActive && nextIndex < state.words.length) {
+      _recordWordPresented(state.words[nextIndex]);
     }
 
     state = state.copyWith(
@@ -243,6 +285,12 @@ class CharadesGameNotifier extends StateNotifier<CharadesGameState> {
         return true;
       }
     }
+  }
+
+  /// إلغاء مؤقت الجولة الحالية فوراً عند الرجوع للوبي
+  void cancelRound() {
+    _timer?.cancel();
+    state = state.copyWith(isRoundActive: false);
   }
 
   @override

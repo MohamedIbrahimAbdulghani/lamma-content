@@ -1,12 +1,19 @@
 // Lamma - by Mohamed Ibrahim
+import 'dart:async';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/category_localization.dart';
+import '../../core/widgets/content_preparation_dialog.dart';
+import '../../core/widgets/honest_exhaustion_dialog.dart';
 import '../../core/widgets/primary_button.dart';
 import '../../core/widgets/secondary_button.dart';
 import '../../data/models/player_model.dart';
+import '../../data/models/question_model.dart';
 import '../../data/providers/game_providers.dart';
+import '../../data/services/game_content_service.dart';
 import '../charades/controllers/charades_controller.dart';
 import '../trivia/presentation/controllers/trivia_controller.dart';
 
@@ -177,33 +184,7 @@ class FinalResultsScreen extends ConsumerWidget {
                 title: 'العب تاني 🔄',
                 icon: Icons.replay,
                 accentColor: AppTheme.accentSaffron,
-                onPressed: () async {
-                  if (roomState.selectedGame == GameType.charades) {
-                    await ref.read(charadesGameProvider.notifier).restartGame();
-                    if (context.mounted) {
-                      context.go('/charades/handoff');
-                    }
-                  } else if (roomState.selectedGame == GameType.trivia) {
-                    await ref.read(triviaGameProvider.notifier).restartGame();
-                    if (context.mounted) {
-                      context.go('/trivia/question');
-                    }
-                  } else {
-                    final settings = ref.read(spySettingsProvider);
-                    final bootstrap = ref.read(bootstrapProvider);
-                    await ref
-                        .read(gameRoomProvider.notifier)
-                        .startSpyGameRound(
-                          packSlug: settings.wordPack,
-                          bootstrapData: bootstrap.data,
-                          totalRounds: settings.rounds,
-                          isNewGame: true,
-                        );
-                    if (context.mounted) {
-                      context.go('/spy/role');
-                    }
-                  }
-                },
+                onPressed: () => _handlePlayAgain(context, ref),
               ),
               const SizedBox(height: 10),
               SecondaryButton(
@@ -323,5 +304,392 @@ class FinalResultsScreen extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _handlePlayAgain(BuildContext context, WidgetRef ref) async {
+    final navContext = context;
+    final roomState = ref.read(gameRoomProvider);
+    final contentService = ref.read(gameContentServiceProvider);
+
+    try {
+      if (roomState.selectedGame == GameType.trivia) {
+        final triviaSettings = ref.read(triviaSettingsProvider);
+        final neededCount = triviaSettings.questionsCount;
+        final cats = triviaSettings.categories.toList();
+        final diff = triviaSettings.difficulty;
+        final catLabel = CategoryLocalization.getTriviaCategoriesLabel(cats);
+
+        final available = contentService.getAvailableTriviaCount(
+          categories: cats,
+          difficulty: diff,
+          roomCode: roomState.roomCode,
+        );
+
+        if (available < neededCount) {
+          final progressNotifier = ValueNotifier<int>(available);
+          final statusNotifier = ValueNotifier<String?>('نجهّز أسئلة جديدة لك... $available من $neededCount');
+          final cancelToken = CancelToken();
+          List<QuestionModel> preparedQuestions = [];
+
+          final result = await ContentPreparationDialog.show(
+            navContext,
+            gameTitle: 'تحدي الشلة',
+            categoryName: catLabel,
+            targetCount: neededCount,
+            accentColor: AppTheme.accentSaffron,
+            progressNotifier: progressNotifier,
+            statusNotifier: statusNotifier,
+            onStartGeneration: () async {
+              try {
+                preparedQuestions = await contentService.getTriviaQuestions(
+                  count: neededCount,
+                  categories: cats,
+                  difficulty: diff,
+                  roomCode: roomState.roomCode.isNotEmpty ? roomState.roomCode : null,
+                  onProgress: (current, target) {
+                    progressNotifier.value = current;
+                    statusNotifier.value = 'نجهّز أسئلة جديدة لك... $current من $target';
+                  },
+                  cancelToken: cancelToken,
+                );
+                return preparedQuestions.length >= neededCount;
+              } catch (_) {
+                rethrow;
+              }
+            },
+            onCancel: () {
+              cancelToken.cancel();
+            },
+          );
+
+          if (result == null || result.type == PreparationResultType.cancelled) {
+            return;
+          }
+
+          if (result.type == PreparationResultType.error) {
+            if (!navContext.mounted) return;
+            await HonestExhaustionDialog.show(
+              navContext,
+              gameTitle: 'تحدي الشلة',
+              reason: result.errorMessage ?? 'تعذر تجهيز أسئلة جديدة في قسم $catLabel',
+              onRetry: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                _handlePlayAgain(navContext, ref);
+              },
+              onReuseSeen: () async {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                await contentService.resetAllHistory();
+                if (!navContext.mounted) return;
+                await ref.read(triviaGameProvider.notifier).restartGame(
+                  questionCount: neededCount,
+                  categories: cats,
+                  difficulty: diff,
+                );
+                if (navContext.mounted) navContext.go('/trivia/question');
+              },
+              onTryLater: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                if (navContext.mounted) navContext.go('/lobby');
+              },
+            );
+            return;
+          }
+
+          final countToUse = (result.type == PreparationResultType.partialStart && result.count > 0)
+              ? result.count
+              : (preparedQuestions.isNotEmpty ? preparedQuestions.length : neededCount);
+
+          await ref.read(triviaGameProvider.notifier).restartGame(
+            newQuestions: preparedQuestions.isNotEmpty ? preparedQuestions : null,
+            questionCount: countToUse,
+            categories: cats,
+            difficulty: diff,
+          );
+          if (navContext.mounted) {
+            navContext.go('/trivia/question');
+          }
+          return;
+        }
+
+        // Available is sufficient
+        await ref.read(triviaGameProvider.notifier).restartGame(
+          questionCount: neededCount,
+          categories: cats,
+          difficulty: diff,
+        );
+        if (navContext.mounted) {
+          navContext.go('/trivia/question');
+        }
+        unawaited(contentService.autoReplenishTriviaIfNeeded(
+          requiredCount: neededCount,
+          categories: cats,
+          difficulty: diff,
+          roomCode: roomState.roomCode,
+        ));
+      } else if (roomState.selectedGame == GameType.charades) {
+        final charadesSettings = ref.read(charadesSettingsProvider);
+        final playersCount = roomState.players.isNotEmpty ? roomState.players.length : 4;
+        final wordsPerTurn = charadesSettings.wordsPerTurn > 0 ? charadesSettings.wordsPerTurn : 10;
+        final neededCount = charadesSettings.roundsPerPlayer * playersCount * wordsPerTurn;
+        final cat = charadesSettings.category;
+        final catLabel = CategoryLocalization.getCharadesCategoryName(cat);
+
+        final available = contentService.getAvailableCharadesCount(category: cat, roomCode: roomState.roomCode);
+        if (available < neededCount) {
+          final progressNotifier = ValueNotifier<int>(available);
+          final statusNotifier = ValueNotifier<String?>('نجهّز كلمات تمثيل جديدة... $available من $neededCount');
+          final cancelToken = CancelToken();
+
+          final result = await ContentPreparationDialog.show(
+            navContext,
+            gameTitle: 'مثّل ومتتكلمش',
+            categoryName: catLabel,
+            targetCount: neededCount,
+            accentColor: AppTheme.accentMint,
+            progressNotifier: progressNotifier,
+            statusNotifier: statusNotifier,
+            onStartGeneration: () async {
+              await contentService.autoReplenishCharadesIfNeeded(
+                requiredCount: neededCount,
+                category: cat,
+                roomCode: roomState.roomCode,
+                onProgress: (cur, tot) {
+                  progressNotifier.value = cur;
+                  statusNotifier.value = 'نجهّز كلمات تمثيل جديدة... $cur من $tot';
+                },
+                cancelToken: cancelToken,
+              );
+              return true;
+            },
+            onCancel: () => cancelToken.cancel(),
+          );
+
+          if (result == null || result.type == PreparationResultType.cancelled) return;
+          if (result.type == PreparationResultType.error) {
+            if (!navContext.mounted) return;
+            await HonestExhaustionDialog.show(
+              navContext,
+              gameTitle: 'مثّل ومتتكلمش',
+              reason: result.errorMessage ?? 'تعذر تجهيز كلمات جديدة في قسم $catLabel',
+              onRetry: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                _handlePlayAgain(navContext, ref);
+              },
+              onReuseSeen: () async {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                await contentService.resetAllHistory();
+                if (!navContext.mounted) return;
+                await ref.read(charadesGameProvider.notifier).restartGame(
+                  category: cat,
+                  roundSeconds: charadesSettings.roundSeconds,
+                  roundsPerPlayer: charadesSettings.roundsPerPlayer,
+                  wordsPerTurn: charadesSettings.wordsPerTurn,
+                );
+                if (navContext.mounted) navContext.go('/charades/handoff');
+              },
+              onTryLater: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                if (navContext.mounted) navContext.go('/lobby');
+              },
+            );
+            return;
+          }
+        }
+
+        await ref.read(charadesGameProvider.notifier).restartGame(
+          category: cat,
+          roundSeconds: charadesSettings.roundSeconds,
+          roundsPerPlayer: charadesSettings.roundsPerPlayer,
+          wordsPerTurn: charadesSettings.wordsPerTurn,
+        );
+        if (navContext.mounted) {
+          navContext.go('/charades/handoff');
+        }
+        unawaited(contentService.autoReplenishCharadesIfNeeded(
+          requiredCount: neededCount,
+          category: cat,
+          roomCode: roomState.roomCode,
+        ));
+      } else {
+        final settings = ref.read(spySettingsProvider);
+        final bootstrap = ref.read(bootstrapProvider);
+        final pack = settings.wordPack;
+        final packLabel = CategoryLocalization.getSpyPackName(pack);
+        final neededCount = settings.rounds;
+
+        final available = contentService.getAvailableSpyCount(packSlug: pack, roomCode: roomState.roomCode);
+        if (available < neededCount) {
+          final progressNotifier = ValueNotifier<int>(available);
+          final statusNotifier = ValueNotifier<String?>('نجهّز جولات سرية جديدة... $available من $neededCount');
+          final cancelToken = CancelToken();
+
+          final result = await ContentPreparationDialog.show(
+            navContext,
+            gameTitle: 'مين الجاسوس',
+            categoryName: packLabel,
+            targetCount: neededCount,
+            accentColor: AppTheme.accentCoral,
+            progressNotifier: progressNotifier,
+            statusNotifier: statusNotifier,
+            onStartGeneration: () async {
+              await contentService.autoReplenishSpyIfNeeded(
+                requiredCount: neededCount,
+                packSlug: pack,
+                roomCode: roomState.roomCode,
+                onProgress: (cur, tot) {
+                  progressNotifier.value = cur;
+                  statusNotifier.value = 'نجهّز جولات سرية جديدة... $cur من $tot';
+                },
+                cancelToken: cancelToken,
+              );
+              return true;
+            },
+            onCancel: () => cancelToken.cancel(),
+          );
+
+          if (result == null || result.type == PreparationResultType.cancelled) return;
+          if (result.type == PreparationResultType.error) {
+            if (!navContext.mounted) return;
+            await HonestExhaustionDialog.show(
+              navContext,
+              gameTitle: 'مين الجاسوس',
+              reason: result.errorMessage ?? 'تعذر تجهيز كلمات جديدة لحزمة $packLabel',
+              onRetry: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                _handlePlayAgain(navContext, ref);
+              },
+              onReuseSeen: () async {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                await contentService.resetAllHistory();
+                if (!navContext.mounted) return;
+                await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+                  packSlug: pack,
+                  bootstrapData: bootstrap.data,
+                  totalRounds: settings.rounds,
+                  isNewGame: true,
+                );
+                if (navContext.mounted) navContext.go('/spy/role');
+              },
+              onTryLater: () {
+                Navigator.of(navContext, rootNavigator: true).pop();
+                if (navContext.mounted) navContext.go('/lobby');
+              },
+            );
+            return;
+          }
+        }
+
+        await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+          packSlug: pack,
+          bootstrapData: bootstrap.data,
+          totalRounds: settings.rounds,
+          isNewGame: true,
+        );
+        if (navContext.mounted) {
+          navContext.go('/spy/role');
+        }
+        unawaited(contentService.autoReplenishSpyIfNeeded(
+          requiredCount: neededCount,
+          packSlug: pack,
+          roomCode: roomState.roomCode,
+        ));
+      }
+    } on InsufficientTriviaQuestionsException catch (e) {
+      if (navContext.mounted) {
+        await HonestExhaustionDialog.show(
+          navContext,
+          gameTitle: 'تحدي الشلة',
+          reason: e.toString(),
+          onRetry: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            _handlePlayAgain(navContext, ref);
+          },
+          onReuseSeen: () async {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            await contentService.resetAllHistory();
+            if (!navContext.mounted) return;
+            final triviaSettings = ref.read(triviaSettingsProvider);
+            await ref.read(triviaGameProvider.notifier).restartGame(
+              questionCount: triviaSettings.questionsCount,
+              categories: triviaSettings.categories.toList(),
+              difficulty: triviaSettings.difficulty,
+            );
+            if (navContext.mounted) navContext.go('/trivia/question');
+          },
+          onTryLater: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            if (navContext.mounted) navContext.go('/lobby');
+          },
+        );
+      }
+    } on InsufficientCharadesWordsException catch (e) {
+      if (navContext.mounted) {
+        await HonestExhaustionDialog.show(
+          navContext,
+          gameTitle: 'مثّل ومتتكلمش',
+          reason: e.toString(),
+          onRetry: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            _handlePlayAgain(navContext, ref);
+          },
+          onReuseSeen: () async {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            await contentService.resetAllHistory();
+            if (!navContext.mounted) return;
+            final charadesSettings = ref.read(charadesSettingsProvider);
+            await ref.read(charadesGameProvider.notifier).restartGame(
+              category: charadesSettings.category,
+              roundSeconds: charadesSettings.roundSeconds,
+              roundsPerPlayer: charadesSettings.roundsPerPlayer,
+              wordsPerTurn: charadesSettings.wordsPerTurn,
+            );
+            if (navContext.mounted) navContext.go('/charades/handoff');
+          },
+          onTryLater: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            if (navContext.mounted) navContext.go('/lobby');
+          },
+        );
+      }
+    } on InsufficientSpyWordsException catch (e) {
+      if (navContext.mounted) {
+        await HonestExhaustionDialog.show(
+          navContext,
+          gameTitle: 'مين الجاسوس',
+          reason: e.toString(),
+          onRetry: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            _handlePlayAgain(navContext, ref);
+          },
+          onReuseSeen: () async {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            await contentService.resetAllHistory();
+            if (!navContext.mounted) return;
+            final settings = ref.read(spySettingsProvider);
+            final bootstrap = ref.read(bootstrapProvider);
+            await ref.read(gameRoomProvider.notifier).startSpyGameRound(
+              packSlug: settings.wordPack,
+              bootstrapData: bootstrap.data,
+              totalRounds: settings.rounds,
+              isNewGame: true,
+            );
+            if (navContext.mounted) navContext.go('/spy/role');
+          },
+          onTryLater: () {
+            Navigator.of(navContext, rootNavigator: true).pop();
+            if (navContext.mounted) navContext.go('/lobby');
+          },
+        );
+      }
+    } catch (e) {
+      if (navContext.mounted) {
+        ScaffoldMessenger.of(navContext).showSnackBar(
+          SnackBar(
+            content: Text('تعذر بدء لعبة جديدة: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
   }
 }

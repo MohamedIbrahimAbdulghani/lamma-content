@@ -46,7 +46,7 @@ void main() {
   });
 
   group('1. عدم تكرار أي عنصر عبر 100 جولة متتالية في الألعاب الثلاث (100 Rounds No-Repeat)', () {
-    test('مثّل ومتتكلمش (Charades): 100 جولة متتالية دون تكرار أي كلمة', () async {
+    test('مثّل ومتتكلمش (Charades): 100 جولة متتالية دون تكرار أي كلمة عند التقديم', () async {
       final contentService = GameContentService(api, storage);
       final seenWords = <String>{};
 
@@ -61,28 +61,41 @@ void main() {
           final norm = ArabicTextNormalizer.normalize(w);
           expect(seenWords.contains(norm), isFalse, reason: 'الكلمة $w تكررت في الجولة $round');
           seenWords.add(norm);
+          await contentService.markCharadesWordPresented(w);
         }
       }
 
       expect(seenWords.length, equals(300));
     });
 
-    test('مين الجاسوس (Spy): 100 جولة متتالية دون تكرار حتى نفاد البنك، ثم تدوير الأقدم FIFO دون توقف', () async {
+    test('مين الجاسوس (Spy): عدم تكرار الكلمة إطلاقاً حتى نفاد البنك ثم التوقف الصريح دون تدوير صامت', () async {
       final contentService = GameContentService(api, storage);
-      final seenHashes = <String>[];
+      final seenHashes = <String>{};
 
-      for (int round = 0; round < 100; round++) {
-        final word = await contentService.getNextSpyWord(packSlug: 'places');
-        expect(word, isNotNull);
-        expect(word!.isNotEmpty, isTrue);
-
+      // Bank has distinct words. We loop until bank exhausts.
+      String? prevWord;
+      int presentedCount = 0;
+      while (true) {
+        final word = await contentService.getNextSpyWord(
+          packSlug: 'places',
+          previousWord: prevWord,
+        );
+        if (word == null) {
+          // نفد البنك بدون أي تكرار
+          break;
+        }
         final h = ArabicTextNormalizer.wordHash(word);
+        expect(seenHashes.contains(h), isFalse, reason: 'الكلمة تكررت قبل النفاد!');
+        expect(word, isNot(equals(prevWord)), reason: 'الكلمة تكررت في جولتين متتاليتين!');
         seenHashes.add(h);
+        await contentService.markSpyRoundPresented(word);
+        prevWord = word;
+        presentedCount++;
       }
 
-      expect(seenHashes.length, equals(100));
-      // لا توقف ولا كراش إطلاقاً
-      expect(contentService.hasRecycledSpy, isTrue);
+      expect(presentedCount, greaterThan(0));
+      // لا تدوير صامت إطلاقاً
+      expect(contentService.hasRecycledSpy, isFalse);
     });
 
     test('تحدي الشلة (Trivia): 100 جولة متتالية دون تكرار أي سؤال في الجولات الأولى، ثم تدوير الأقدم مع تلميح', () async {

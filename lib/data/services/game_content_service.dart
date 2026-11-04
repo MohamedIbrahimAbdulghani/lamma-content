@@ -1,9 +1,11 @@
 // Lamma - by Mohamed Ibrahim
 
+import 'dart:async';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/utils/arabic_text_normalizer.dart';
+import '../../core/utils/category_localization.dart';
 import '../api/api_client.dart';
 import 'ai_question_service.dart';
 import '../constants/charades_words_bank.dart';
@@ -251,15 +253,61 @@ class InsufficientTriviaQuestionsException implements Exception {
   final String category;
   final int available;
   final int requiredCount;
+  final String? failureReason;
 
   const InsufficientTriviaQuestionsException({
     required this.category,
     required this.available,
     required this.requiredCount,
+    this.failureReason,
   });
 
   @override
-  String toString() => 'القسم $category فيه $available سؤال فقط، والمطلوب $requiredCount';
+  String toString() {
+    if (failureReason != null && failureReason!.isNotEmpty) {
+      return failureReason!;
+    }
+    final localized = CategoryLocalization.getTriviaCategoryName(category);
+    return 'القسم $localized فيه $available سؤال فقط، والمطلوب $requiredCount';
+  }
+}
+
+class InsufficientSpyWordsException implements Exception {
+  final String pack;
+  final String? failureReason;
+
+  const InsufficientSpyWordsException({
+    required this.pack,
+    this.failureReason,
+  });
+
+  @override
+  String toString() {
+    if (failureReason != null && failureReason!.isNotEmpty) {
+      return failureReason!;
+    }
+    final localized = CategoryLocalization.getSpyPackName(pack);
+    return 'نفد مخزون الكلمات غير المشاهدة لحزمة $localized';
+  }
+}
+
+class InsufficientCharadesWordsException implements Exception {
+  final String category;
+  final String? failureReason;
+
+  const InsufficientCharadesWordsException({
+    required this.category,
+    this.failureReason,
+  });
+
+  @override
+  String toString() {
+    if (failureReason != null && failureReason!.isNotEmpty) {
+      return failureReason!;
+    }
+    final localized = CategoryLocalization.getCharadesCategoryName(category);
+    return 'نفد مخزون الكلمات غير المشاهدة لقسم $localized';
+  }
 }
 
 // Rich Egyptian Fallback Bank for Trivia Game
@@ -818,6 +866,551 @@ class GameContentService {
   bool hasRecycledCharades = false;
   String? lastHintMessage;
 
+  // Room-Scoped Pre-buffered Queues (حجز المحتوى المسبق للغرف لتسريع "العب تاني" إلى أقل من ثانية)
+  final Map<String, List<QuestionModel>> _roomPrebufferedTrivia = {};
+  final Map<String, List<String>> _roomPrebufferedCharades = {};
+  final Map<String, List<Map<String, dynamic>>> _roomPrebufferedSpy = {};
+  final Set<String> _activePrebufferTasks = {};
+
+  void setRoomPrebufferedTrivia(String roomCode, List<QuestionModel> questions) {
+    _roomPrebufferedTrivia[roomCode.toUpperCase()] = List.from(questions);
+  }
+
+  void setRoomPrebufferedCharades(String roomCode, List<String> words) {
+    _roomPrebufferedCharades[roomCode.toUpperCase()] = List.from(words);
+  }
+
+  void setRoomPrebufferedSpy(String roomCode, List<Map<String, dynamic>> rounds) {
+    _roomPrebufferedSpy[roomCode.toUpperCase()] = List.from(rounds);
+  }
+
+  bool hasPrebufferedTrivia(String roomCode, int count) {
+    final list = _roomPrebufferedTrivia[roomCode.toUpperCase()];
+    return list != null && list.length >= count;
+  }
+
+  bool hasPrebufferedCharades(String roomCode, int count) {
+    final list = _roomPrebufferedCharades[roomCode.toUpperCase()];
+    return list != null && list.length >= count;
+  }
+
+  bool hasPrebufferedSpy(String roomCode) {
+    final list = _roomPrebufferedSpy[roomCode.toUpperCase()];
+    return list != null && list.isNotEmpty;
+  }
+
+  List<QuestionModel>? consumePrebufferedTrivia(
+    String roomCode, {
+    int count = 10,
+    List<String> categories = const [],
+    String difficulty = 'all',
+  }) {
+    final code = roomCode.toUpperCase();
+    final buffered = _roomPrebufferedTrivia[code];
+    if (buffered == null || buffered.length < count) return null;
+
+    final consumed = buffered.take(count).toList();
+    _roomPrebufferedTrivia[code] = buffered.skip(count).toList();
+    return consumed;
+  }
+
+  List<String>? consumePrebufferedCharades(String roomCode, {int count = 15}) {
+    final code = roomCode.toUpperCase();
+    final buffered = _roomPrebufferedCharades[code];
+    if (buffered == null || buffered.length < count) return null;
+
+    final consumed = buffered.take(count).toList();
+    _roomPrebufferedCharades[code] = buffered.skip(count).toList();
+    return consumed;
+  }
+
+  Map<String, dynamic>? consumePrebufferedSpyRound(String roomCode) {
+    final code = roomCode.toUpperCase();
+    final buffered = _roomPrebufferedSpy[code];
+    if (buffered == null || buffered.isEmpty) return null;
+    return buffered.removeAt(0);
+  }
+
+  void clearPrebufferedForRoom(String roomCode) {
+    final code = roomCode.toUpperCase();
+    _roomPrebufferedTrivia.remove(code);
+    _roomPrebufferedCharades.remove(code);
+    _roomPrebufferedSpy.remove(code);
+  }
+
+  /// تجهيز محتوى الجولة التالية لتحدي الشلة مسبقاً أثناء اللعب
+  Future<void> prebufferNextTriviaGame({
+    required String roomCode,
+    required int count,
+    List<String> categories = const [],
+    String difficulty = 'all',
+    Set<String>? externalSeenPromptHashes,
+    Set<String>? externalSeenAnswerHashes,
+  }) async {
+    final code = roomCode.toUpperCase();
+    final taskKey = 'trivia_$code';
+    if (_activePrebufferTasks.contains(taskKey)) return;
+    _activePrebufferTasks.add(taskKey);
+
+    try {
+      final catParam = categories.isNotEmpty && !categories.contains('all') ? categories.join(',') : null;
+      final diffParam = difficulty != 'all' && difficulty != 'mixed' ? difficulty : null;
+
+      final batch = await _api.fetchNextRoomQuestionsBatch(
+        code,
+        count: count,
+        categories: catParam,
+        difficulty: diffParam,
+        excludeHashes: externalSeenPromptHashes?.toList() ?? [],
+        excludeAnswerHashes: externalSeenAnswerHashes?.toList() ?? [],
+      );
+
+      if (batch.length >= count) {
+        setRoomPrebufferedTrivia(code, batch);
+      } else {
+        final localQuestions = await getTriviaQuestions(
+          count: count,
+          categories: categories,
+          difficulty: difficulty,
+          allowAi: true,
+          roomCode: code,
+          externalSeenPromptHashes: externalSeenPromptHashes,
+          externalSeenAnswerHashes: externalSeenAnswerHashes,
+        );
+        if (localQuestions.length >= count) {
+          setRoomPrebufferedTrivia(code, localQuestions);
+        }
+      }
+    } catch (_) {
+    } finally {
+      _activePrebufferTasks.remove(taskKey);
+    }
+  }
+
+  // ==========================================
+  // AUTO REPLENISHMENT & CONCURRENCY LOCK
+  // ==========================================
+  final Map<String, Future<void>> _activeGenerationLocks = {};
+
+  int getAvailableTriviaCount({
+    List<String> categories = const [],
+    String difficulty = 'all',
+    String? roomCode,
+    Set<String>? externalSeenPromptHashes,
+    Set<String>? externalSeenAnswerHashes,
+  }) {
+    int count = 0;
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = _roomPrebufferedTrivia[roomCode.toUpperCase()];
+      if (prebuffered != null) {
+        count += prebuffered.length;
+      }
+    }
+
+    final localSeenPrompts = _storage.getSeenTriviaPromptHashes();
+    final localSeenAnswers = _storage.getSeenTriviaAnswerHashes();
+    final seenIds = _storage.getSeenQuestions();
+    final allSeenPrompts = {...localSeenPrompts, ...?externalSeenPromptHashes};
+    final allSeenAnswers = {...localSeenAnswers, ...?externalSeenAnswerHashes};
+
+    bool matchesCategory(String cat) {
+      if (categories.isEmpty || categories.contains('all')) return true;
+      final canonicalCat = CategoryLocalization.getTriviaCategoryName(cat);
+      for (final t in categories) {
+        if (t == cat || t == canonicalCat || CategoryLocalization.getTriviaCategoryName(t) == canonicalCat) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    bool matchesDifficulty(String diff) {
+      if (difficulty.isEmpty || difficulty == 'all') return true;
+      return diff == difficulty;
+    }
+
+    for (final q in _triviaBuffer) {
+      final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
+      final aHash = _safeAnswerHash(q);
+      if (!allSeenPrompts.contains(pHash) &&
+          !allSeenAnswers.contains(aHash) &&
+          !(q.id > 0 && seenIds.contains(q.id)) &&
+          matchesCategory(q.categorySlug) &&
+          matchesDifficulty(q.difficulty)) {
+        count++;
+      }
+    }
+
+    for (final q in kFallbackTriviaQuestions) {
+      final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
+      final aHash = _safeAnswerHash(q);
+      if (!allSeenPrompts.contains(pHash) &&
+          !allSeenAnswers.contains(aHash) &&
+          !(q.id > 0 && seenIds.contains(q.id)) &&
+          matchesCategory(q.categorySlug) &&
+          matchesDifficulty(q.difficulty)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  bool shouldReplenishTrivia({
+    required int requiredCount,
+    List<String> categories = const [],
+    String difficulty = 'all',
+    String? roomCode,
+    Set<String>? externalSeenPromptHashes,
+    Set<String>? externalSeenAnswerHashes,
+  }) {
+    final available = getAvailableTriviaCount(
+      categories: categories,
+      difficulty: difficulty,
+      roomCode: roomCode,
+      externalSeenPromptHashes: externalSeenPromptHashes,
+      externalSeenAnswerHashes: externalSeenAnswerHashes,
+    );
+    final safetyMargin = requiredCount * 2;
+    return available <= (requiredCount + safetyMargin);
+  }
+
+  Future<void> autoReplenishTriviaIfNeeded({
+    required int requiredCount,
+    List<String> categories = const [],
+    String difficulty = 'all',
+    String? roomCode,
+    Set<String>? externalSeenPromptHashes,
+    Set<String>? externalSeenAnswerHashes,
+    void Function(int current, int target)? onProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final safetyMargin = requiredCount * 2;
+    final threshold = requiredCount + safetyMargin;
+    final available = getAvailableTriviaCount(
+      categories: categories,
+      difficulty: difficulty,
+      roomCode: roomCode,
+      externalSeenPromptHashes: externalSeenPromptHashes,
+      externalSeenAnswerHashes: externalSeenAnswerHashes,
+    );
+
+    if (available > threshold) return;
+
+    final targetReplenish = threshold - available;
+    final key = 'trivia:${categories.join(",")}:$difficulty';
+
+    if (_activeGenerationLocks.containsKey(key)) {
+      await _activeGenerationLocks[key];
+      return;
+    }
+
+    final completer = Completer<void>();
+    _activeGenerationLocks[key] = completer.future;
+
+    try {
+      final fetched = await getTriviaQuestions(
+        count: targetReplenish < 5 ? 5 : targetReplenish,
+        categories: categories,
+        difficulty: difficulty,
+        roomCode: roomCode,
+        allowAi: true,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
+        externalSeenPromptHashes: externalSeenPromptHashes,
+        externalSeenAnswerHashes: externalSeenAnswerHashes,
+      );
+
+      for (final q in fetched) {
+        if (!_triviaBuffer.contains(q)) {
+          _triviaBuffer.add(q);
+        }
+      }
+      completer.complete();
+    } on InsufficientTriviaQuestionsException catch (_) {
+      completer.complete();
+    } catch (e, st) {
+      completer.completeError(e, st);
+    } finally {
+      _activeGenerationLocks.remove(key);
+    }
+  }
+
+  int getAvailableCharadesCount({
+    String category = 'movies',
+    String? roomCode,
+    Set<String>? externalSeenHashes,
+  }) {
+    int count = 0;
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = _roomPrebufferedCharades[roomCode.toUpperCase()];
+      if (prebuffered != null) {
+        count += prebuffered.length;
+      }
+    }
+
+    final cat = normalizeCharadesCategory(category);
+    final localSeen = _storage.getSeenCharadesHashes();
+    final allSeen = {...localSeen, ...?externalSeenHashes};
+
+    for (final w in _charadesBuffer) {
+      final h = ArabicTextNormalizer.wordHash(w);
+      if (!allSeen.contains(h) && isActableCharadesWord(w)) {
+        count++;
+      }
+    }
+
+    final pool = CharadesWordsBank.getWordsForCategory(cat);
+    for (final w in pool) {
+      final h = ArabicTextNormalizer.wordHash(w);
+      if (!allSeen.contains(h) && isActableCharadesWord(w)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  bool shouldReplenishCharades({
+    required int requiredCount,
+    String category = 'movies',
+    String? roomCode,
+    Set<String>? externalSeenHashes,
+  }) {
+    final available = getAvailableCharadesCount(
+      category: category,
+      roomCode: roomCode,
+      externalSeenHashes: externalSeenHashes,
+    );
+    final safetyMargin = requiredCount * 2;
+    return available <= (requiredCount + safetyMargin);
+  }
+
+  Future<void> autoReplenishCharadesIfNeeded({
+    required int requiredCount,
+    String category = 'movies',
+    String? roomCode,
+    Set<String>? externalSeenHashes,
+    void Function(int current, int target)? onProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final safetyMargin = requiredCount * 2;
+    final threshold = requiredCount + safetyMargin;
+    final available = getAvailableCharadesCount(
+      category: category,
+      roomCode: roomCode,
+      externalSeenHashes: externalSeenHashes,
+    );
+
+    if (available > threshold) return;
+
+    final targetReplenish = threshold - available;
+    final key = 'charades:$category';
+
+    if (_activeGenerationLocks.containsKey(key)) {
+      await _activeGenerationLocks[key];
+      return;
+    }
+
+    final completer = Completer<void>();
+    _activeGenerationLocks[key] = completer.future;
+
+    try {
+      final fetched = await getCharadesWords(
+        count: targetReplenish < 5 ? 5 : targetReplenish,
+        category: category,
+        roomCode: roomCode,
+        externalSeenHashes: externalSeenHashes,
+        onProgress: onProgress,
+        cancelToken: cancelToken,
+      );
+
+      for (final w in fetched) {
+        if (!_charadesBuffer.contains(w)) {
+          _charadesBuffer.add(w);
+        }
+      }
+      completer.complete();
+    } catch (e, st) {
+      completer.completeError(e, st);
+    } finally {
+      _activeGenerationLocks.remove(key);
+    }
+  }
+
+  int getAvailableSpyCount({
+    String packSlug = 'places',
+    String difficulty = 'medium',
+    String? roomCode,
+  }) {
+    int count = 0;
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = _roomPrebufferedSpy[roomCode.toUpperCase()];
+      if (prebuffered != null) {
+        count += prebuffered.length;
+      }
+    }
+
+    final localSeen = _storage.getSeenSpyHashes();
+
+    for (final w in _spyBuffer) {
+      final h = ArabicTextNormalizer.wordHash(w);
+      if (!localSeen.contains(h)) {
+        count++;
+      }
+    }
+
+    final normPack = (packSlug == 'food' || packSlug == 'foods') ? 'food' : packSlug;
+    final List<String> pool;
+    if (normPack == 'mixed') {
+      pool = kFallbackSpyPacks.values.expand((element) => element).toList();
+    } else {
+      pool = kFallbackSpyPacks[normPack] ?? [];
+    }
+    for (final w in pool) {
+      final h = ArabicTextNormalizer.wordHash(w);
+      if (!localSeen.contains(h)) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  bool shouldReplenishSpy({
+    required int requiredCount,
+    String packSlug = 'places',
+    String difficulty = 'medium',
+    String? roomCode,
+  }) {
+    final available = getAvailableSpyCount(
+      packSlug: packSlug,
+      difficulty: difficulty,
+      roomCode: roomCode,
+    );
+    final safetyMargin = requiredCount * 2;
+    return available <= (requiredCount + safetyMargin);
+  }
+
+  Future<void> autoReplenishSpyIfNeeded({
+    required int requiredCount,
+    String packSlug = 'places',
+    String difficulty = 'medium',
+    String? roomCode,
+    void Function(int current, int target)? onProgress,
+    CancelToken? cancelToken,
+  }) async {
+    final safetyMargin = requiredCount * 2;
+    final threshold = requiredCount + safetyMargin;
+    final available = getAvailableSpyCount(
+      packSlug: packSlug,
+      difficulty: difficulty,
+      roomCode: roomCode,
+    );
+
+    if (available > threshold) return;
+
+    final targetReplenish = threshold - available;
+    final key = 'spy:$packSlug:$difficulty';
+
+    if (_activeGenerationLocks.containsKey(key)) {
+      await _activeGenerationLocks[key];
+      return;
+    }
+
+    final completer = Completer<void>();
+    _activeGenerationLocks[key] = completer.future;
+
+    try {
+      final rawItems = await _api.generateAiContent(
+        gameType: 'spy',
+        category: (packSlug == 'food') ? 'foods' : packSlug,
+        count: targetReplenish < 5 ? 5 : targetReplenish,
+        cancelToken: cancelToken,
+      ).timeout(const Duration(seconds: 22));
+
+      final localSeen = _storage.getSeenSpyHashes();
+      for (final item in rawItems) {
+        final w = (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString().trim();
+        if (w.isEmpty) continue;
+        final h = ArabicTextNormalizer.wordHash(w);
+        if (!localSeen.contains(h) && !_spyBuffer.contains(w)) {
+          _spyBuffer.add(w);
+        }
+      }
+      completer.complete();
+    } catch (e, st) {
+      completer.completeError(e, st);
+    } finally {
+      _activeGenerationLocks.remove(key);
+    }
+  }
+
+  /// تجهيز محتوى الجولة التالية لمثّل ومتتكلمش مسبقاً أثناء اللعب
+  Future<void> prebufferNextCharadesGame({
+    required String roomCode,
+    required int count,
+    String category = 'movies',
+    Set<String>? externalSeenHashes,
+  }) async {
+    final code = roomCode.toUpperCase();
+    final taskKey = 'charades_$code';
+    if (_activePrebufferTasks.contains(taskKey)) return;
+    _activePrebufferTasks.add(taskKey);
+
+    try {
+      final batch = await _api.fetchNextCharadesBatch(
+        code,
+        count: count,
+        category: category,
+        excludeWords: externalSeenHashes?.toList() ?? [],
+      );
+
+      if (batch.length >= count) {
+        setRoomPrebufferedCharades(code, batch);
+      } else {
+        final localWords = await getCharadesWords(
+          count: count,
+          category: category,
+          externalSeenHashes: externalSeenHashes,
+        );
+        if (localWords.length >= count) {
+          setRoomPrebufferedCharades(code, localWords);
+        }
+      }
+    } catch (_) {
+    } finally {
+      _activePrebufferTasks.remove(taskKey);
+    }
+  }
+
+  /// تجهيز محتوى الجولة التالية لمين الجاسوس مسبقاً أثناء اللعب
+  Future<void> prebufferNextSpyGame({
+    required String roomCode,
+    required int rounds,
+    String packSlug = 'places',
+  }) async {
+    final code = roomCode.toUpperCase();
+    final taskKey = 'spy_$code';
+    if (_activePrebufferTasks.contains(taskKey)) return;
+    _activePrebufferTasks.add(taskKey);
+
+    try {
+      final batch = await _api.fetchNextSpyBatch(
+        code,
+        rounds: rounds,
+        packSlug: packSlug,
+      );
+
+      if (batch.length >= rounds) {
+        setRoomPrebufferedSpy(code, batch);
+      }
+    } catch (_) {
+    } finally {
+      _activePrebufferTasks.remove(taskKey);
+    }
+  }
+
   GameContentService(
     this._api,
     this._storage, {
@@ -1039,22 +1632,99 @@ class GameContentService {
 
 
   // ==========================================
+  // تسجيل المشاهدة لحظة التقديم الفعلي (Live Presentation Recording)
+  // ==========================================
+
+  /// تسجيل تقديم سؤال لتحدي الشلة لحظة عرضه الفعلي للاعبين
+  Future<void> markTriviaQuestionPresented(
+    QuestionModel q, {
+    dynamic roomServer,
+    ApiClient? api,
+  }) async {
+    final pHash = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
+    final aHash = _safeAnswerHash(q);
+    await _storage.markTriviaHashesSeen(promptHashes: [pHash], answerHashes: [aHash]);
+    await _storage.markTriviaQuestionTextsSeen([q.promptAr]);
+    if (q.id > 0) {
+      await _storage.markQuestionsSeen([q.id]);
+      try {
+        await (api ?? _api).markQuestionsSeen([q.id]);
+      } catch (_) {}
+    }
+    roomServer?.recordSeenTriviaAcrossRoom([pHash], [aHash]);
+  }
+
+  /// تسجيل تقديم كلمة للتمثيل لحظة عرضها الفعلي للاعب
+  Future<void> markCharadesWordPresented(
+    String word, {
+    dynamic roomServer,
+  }) async {
+    final trimmed = word.trim();
+    if (trimmed.isEmpty) return;
+    final h = ArabicTextNormalizer.wordHash(trimmed);
+    await _storage.markCharadesHashesSeen([h]);
+    await _storage.markCharadesWordsSeen([trimmed]);
+    roomServer?.recordSeenCharadesAcrossRoom([h]);
+  }
+
+  /// تسجيل تقديم جولة مين الجاسوس (الكلمة والخيارات) لحظة بدئها
+  Future<void> markSpyRoundPresented(
+    String secretWord, {
+    List<String> spyChoices = const [],
+    dynamic roomServer,
+  }) async {
+    final trimmed = secretWord.trim();
+    if (trimmed.isEmpty) return;
+    final wHash = ArabicTextNormalizer.wordHash(trimmed);
+    final allHashes = <String>[wHash];
+    final allWords = <String>[trimmed];
+    for (final choice in spyChoices) {
+      final cTrim = choice.trim();
+      if (cTrim.isNotEmpty) {
+        allHashes.add(ArabicTextNormalizer.wordHash(cTrim));
+        allWords.add(cTrim);
+      }
+    }
+    await _storage.markSpyHashesSeen(allHashes);
+    await _storage.markSpyWordsSeen(allWords);
+    if (roomServer != null) {
+      for (final h in allHashes) {
+        roomServer.recordSeenSpyAcrossRoom(h);
+      }
+    }
+  }
+
+  // ==========================================
   // 1. مين الجاسوس (SPY GAME)
   // ==========================================
 
-  /// جلب كلمة/مكان سري للجاسوس بدون تكرار
   Future<String?> getNextSpyWord({
     required String packSlug,
     BootstrapData? bootstrapData,
     Set<String>? externalSeenHashes,
+    String? previousWord,
+    String? roomCode,
+    CancelToken? cancelToken,
   }) async {
+    // 0. التحقق من التجهيز المسبق المحجوز للغرفة
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = consumePrebufferedSpyRound(roomCode);
+      if (prebuffered != null) {
+        final secWord = prebuffered['secret_word'] as String?;
+        if (secWord != null && secWord.isNotEmpty) {
+          return secWord;
+        }
+      }
+    }
+
     final localSeen = _storage.getSeenSpyHashes();
     final allSeen = {...localSeen, ...?externalSeenHashes};
 
-    // 1. تنقية البافر من أي كلمات شوهدت سابقاً
+    // 1. تنقية البافر من أي كلمات شوهدت سابقاً أو تطابق الكلمة السابقة
     _spyBuffer.removeWhere((w) {
       final h = ArabicTextNormalizer.wordHash(w);
-      return allSeen.contains(h);
+      return allSeen.contains(h) ||
+          (previousWord != null && ArabicTextNormalizer.areEqual(w, previousWord));
     });
 
     // 2. فحص prefetch في الخلفية
@@ -1065,26 +1735,27 @@ class GameContentService {
     // 3. لو البافر فيه كلمة متاحة
     if (_spyBuffer.isNotEmpty) {
       final picked = _spyBuffer.removeAt(0);
-      final h = ArabicTextNormalizer.wordHash(picked);
-      await _storage.markSpyHashesSeen([h]);
-      await _storage.markSpyWordsSeen([picked]);
       return picked;
     }
 
-    // 4. محاولة التوليد عبر Backend Proxy مع مهلة 5 ثوانٍ
+    // 4. محاولة التوليد عبر Backend Proxy مع مهلة 22 ثانية
     try {
       final rawItems = await _api.generateAiContent(
         gameType: 'spy',
-        category: packSlug,
+        category: (packSlug == 'food') ? 'foods' : packSlug,
         count: 15,
         excludeItems: localSeen.take(30).toList(),
-      ).timeout(const Duration(seconds: 5));
+        cancelToken: cancelToken,
+      ).timeout(const Duration(seconds: 22));
 
       for (final item in rawItems) {
         final w = (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString().trim();
         if (w.isEmpty) continue;
         final h = ArabicTextNormalizer.wordHash(w);
-        if (!allSeen.contains(h) && !_spyBuffer.any((b) => ArabicTextNormalizer.areEqual(b, w))) {
+        final matchesPrev = previousWord != null && ArabicTextNormalizer.areEqual(w, previousWord);
+        if (!allSeen.contains(h) &&
+            !matchesPrev &&
+            !_spyBuffer.any((b) => ArabicTextNormalizer.areEqual(b, w))) {
           _spyBuffer.add(w);
         }
       }
@@ -1092,48 +1763,25 @@ class GameContentService {
 
     if (_spyBuffer.isNotEmpty) {
       final picked = _spyBuffer.removeAt(0);
-      final h = ArabicTextNormalizer.wordHash(picked);
-      await _storage.markSpyHashesSeen([h]);
-      await _storage.markSpyWordsSeen([picked]);
       return picked;
     }
 
-    // 5. Fallback لبنك المحتوى المحلي (الكلمات غير المشاهدة أولاً)
+    // 5. Fallback لبنك المحتوى المحلي (الكلمات غير المشاهدة أولاً وغير المطابقة للكلمة السابقة)
     final fallbackList = _getFallbackSpyWords(packSlug, bootstrapData);
     final unseenFallback = fallbackList.where((w) {
       final h = ArabicTextNormalizer.wordHash(w);
-      return !allSeen.contains(h);
+      final matchesPrev = previousWord != null && ArabicTextNormalizer.areEqual(w, previousWord);
+      return !allSeen.contains(h) && !matchesPrev;
     }).toList();
 
     if (unseenFallback.isNotEmpty) {
       unseenFallback.shuffle(Random());
       final picked = unseenFallback.first;
-      final h = ArabicTextNormalizer.wordHash(picked);
-      await _storage.markSpyHashesSeen([h]);
-      await _storage.markSpyWordsSeen([picked]);
       return picked;
     }
 
-    // 6. كل الكلمات المتاحة شوهدت: استهلاك الأقدم مشاهدة كحل أخير (FIFO Recycle) مع تلميح للمضيف
-    hasRecycledSpy = true;
-    lastHintMessage = 'اتصل بالإنترنت لمحتوى جديد';
-    final seenList = localSeen.toList();
-    final seenIndexMap = <String, int>{};
-    for (var i = 0; i < seenList.length; i++) {
-      seenIndexMap[seenList[i]] = i;
-    }
-    final sortedFallback = List<String>.from(fallbackList);
-    final wordRanks = <String, int>{};
-    for (final w in sortedFallback) {
-      wordRanks[w] = seenIndexMap[ArabicTextNormalizer.wordHash(w)] ?? -1;
-    }
-    sortedFallback.sort((a, b) => wordRanks[a]!.compareTo(wordRanks[b]!));
-
-    final picked = sortedFallback.isNotEmpty ? sortedFallback.first : (fallbackList.isNotEmpty ? fallbackList.first : 'الأهرامات');
-    final h = ArabicTextNormalizer.wordHash(picked);
-    await _storage.markSpyHashesSeen([h]);
-    await _storage.markSpyWordsSeen([picked]);
-    return picked;
+    // 6. ممنوع التدوير الصامت للأقدم مشاهدة عند النفاد
+    return null;
   }
 
   void _triggerPrefetchSpy(String packSlug, BootstrapData? bootstrapData, [Set<String>? seenHashes]) {
@@ -1163,21 +1811,21 @@ class GameContentService {
   }
 
   List<String> _getFallbackSpyWords(String packSlug, BootstrapData? bootstrapData) {
+    final normPack = (packSlug == 'foods' || packSlug == 'food') ? 'food' : packSlug;
     final list = <String>[];
     if (bootstrapData != null) {
       for (final pack in bootstrapData.spyPacks) {
-        if (pack.slug == packSlug || packSlug == 'mixed') {
+        final pSlug = (pack.slug == 'foods' || pack.slug == 'food') ? 'food' : pack.slug;
+        if (pSlug == normPack || normPack == 'mixed') {
           list.addAll(pack.words);
         }
       }
     }
     if (list.isEmpty) {
-      if (packSlug == 'movies') {
-        list.addAll(kFallbackSpyPacks['movies']!);
-      } else if (packSlug == 'food') {
-        list.addAll(kFallbackSpyPacks['food']!);
-      } else {
-        list.addAll(kFallbackSpyPacks['places']!);
+      if (normPack == 'mixed') {
+        kFallbackSpyPacks.values.forEach(list.addAll);
+      } else if (kFallbackSpyPacks.containsKey(normPack)) {
+        list.addAll(kFallbackSpyPacks[normPack]!);
       }
     }
     return list;
@@ -1198,6 +1846,8 @@ class GameContentService {
     String? roomCode,
     Set<String>? externalSeenPromptHashes,
     Set<String>? externalSeenAnswerHashes,
+    void Function(int current, int target)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     // توحيد الأقسام المختارة
     final targetCategories = <String>[];
@@ -1214,10 +1864,16 @@ class GameContentService {
     final allSeenPrompts = {...localSeenPrompts, ...?externalSeenPromptHashes};
     final allSeenAnswers = {...localSeenAnswers, ...?externalSeenAnswerHashes};
 
-    // دالة تحقق صارمة من مطابقة القسم
+    // دالة تحقق صارمة من مطابقة القسم مع دعم الأسماء البديلة والمعربة
     bool matchesCategory(String cat) {
       if (targetCategories.isEmpty || targetCategories.contains('all')) return true;
-      return targetCategories.contains(cat);
+      final canonicalCat = CategoryLocalization.getTriviaCategoryName(cat);
+      for (final t in targetCategories) {
+        if (t == cat || t == canonicalCat || CategoryLocalization.getTriviaCategoryName(t) == canonicalCat) {
+          return true;
+        }
+      }
+      return false;
     }
 
     // دالة تحقق صارمة من مطابقة الصعوبة
@@ -1247,30 +1903,73 @@ class GameContentService {
 
     final result = <QuestionModel>[];
 
-    // جلب من خادم الجلسة المركزي للغرفة أولاً (استبعاد تلقائي لما رآه أي حاضر)
-    if (roomCode != null && roomCode.isNotEmpty && allowAi) {
+    // 0. التحقق من التجهيز المسبق المحجوز للغرفة (Zero-latency Instant Play Again)
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = consumePrebufferedTrivia(
+        roomCode,
+        count: count,
+        categories: targetCategories,
+        difficulty: difficulty,
+      );
+      if (prebuffered != null && prebuffered.length >= count) {
+        // إطلاق تجهيز مسبق في الخلفية للعبة التالية فوراً
+        unawaited(prebufferNextTriviaGame(
+          roomCode: roomCode,
+          count: count,
+          categories: targetCategories,
+          difficulty: difficulty,
+          externalSeenPromptHashes: externalSeenPromptHashes,
+          externalSeenAnswerHashes: externalSeenAnswerHashes,
+        ));
+        return prebuffered;
+      }
+    }
+
+    // جلب من خادم الجلسة المركزي للغرفة بدفعة واحدة فائقة السرعة أولاً
+    if (roomCode != null && roomCode.isNotEmpty) {
       try {
         final catParam = targetCategories.isNotEmpty && !targetCategories.contains('all')
             ? targetCategories.join(',')
             : null;
-        int attempts = 0;
-        while (result.length < count && attempts < count + 2) {
-          attempts++;
-          final q = await _api.fetchNextRoomQuestion(
-            roomCode,
-            categories: catParam,
-            difficulty: difficulty != 'all' ? difficulty : null,
-          );
-          if (q == null) break;
+
+        final batch = await _api.fetchNextRoomQuestionsBatch(
+          roomCode,
+          count: count,
+          categories: catParam,
+          difficulty: difficulty != 'all' ? difficulty : null,
+          excludeHashes: allSeenPrompts.toList(),
+          excludeAnswerHashes: allSeenAnswers.toList(),
+        );
+
+        for (final q in batch) {
           if (isAllowed(q, result)) {
             result.add(q);
+          }
+        }
+
+        // إذا كان هناك نقص طفيف نكمل بالسؤال الفردي
+        if (result.length < count) {
+          int attempts = 0;
+          final maxAttempts = (count - result.length) * 2;
+          while (result.length < count && attempts < maxAttempts) {
+            attempts++;
+            final q = await _api.fetchNextRoomQuestion(
+              roomCode,
+              categories: catParam,
+              difficulty: difficulty != 'all' ? difficulty : null,
+              excludeHashes: allSeenPrompts.toList(),
+              excludeAnswerHashes: allSeenAnswers.toList(),
+            );
+            if (q == null) break;
+            if (isAllowed(q, result)) {
+              result.add(q);
+            }
           }
         }
       } catch (_) {}
     }
 
     if (result.length >= count) {
-      await _recordSeenTrivia(result);
       return result.take(count).toList();
     }
 
@@ -1280,10 +1979,6 @@ class GameContentService {
       final aHash = _safeAnswerHash(q);
       return allSeenPrompts.contains(pHash) || allSeenAnswers.contains(aHash) || (q.id > 0 && seenIds.contains(q.id));
     });
-
-    if (_triviaBuffer.length <= 5 && allowAi) {
-      _triggerPrefetchTrivia(targetCategories, difficulty);
-    }
 
     // 2. أخذ من البافر فقط ما يطابق الأقسام والصعوبة المختارة حصراً
     final remainingBuffer = <QuestionModel>[];
@@ -1298,14 +1993,17 @@ class GameContentService {
     _triviaBuffer.addAll(remainingBuffer);
 
     if (result.length >= count) {
-      await _recordSeenTrivia(result);
       return result.take(count).toList();
     }
 
     // 3. توليد بالذكاء الاصطناعي (AI) دفعة جديدة مع إعادة المحاولة حتى 3 مرات للعدد الناقص
+    String? lastAiError;
     if (result.length < count && allowAi) {
       int retryCount = 0;
       while (result.length < count && retryCount < 3) {
+        if (cancelToken != null && cancelToken.isCancelled) {
+          throw const AiCancelledException();
+        }
         retryCount++;
         try {
           final missing = count - result.length;
@@ -1313,7 +2011,7 @@ class GameContentService {
 
           List<QuestionModel> aiQuestions = [];
 
-          // فحص ApiClient أولاً (للتوافق مع الـ mock في الاختبارات والبروكسي) مع مهلة 4 ثوانٍ
+          // فحص ApiClient أولاً مع مهلة كافية 22 ثانية
           try {
             final rawItems = await _api.generateAiContent(
               gameType: 'trivia',
@@ -1323,7 +2021,8 @@ class GameContentService {
               difficulty: difficulty,
               count: batchCount,
               excludeItems: result.map((r) => r.promptAr).take(20).toList(),
-            ).timeout(const Duration(seconds: 4));
+              cancelToken: cancelToken,
+            ).timeout(const Duration(seconds: 22));
 
             if (rawItems.isNotEmpty) {
               for (var i = 0; i < rawItems.length; i++) {
@@ -1334,8 +2033,10 @@ class GameContentService {
                     .where((e) => e.isNotEmpty)
                     .toList();
                 final correctIndex = item['correct_index'] as int? ?? 0;
-                final itemCat = (item['category_slug'] ?? item['category']) as String? ??
-                    (targetCategories.isNotEmpty ? targetCategories.first : 'general');
+                final rawCat = (item['category_slug'] ?? item['category']) as String?;
+                final itemCat = CategoryLocalization.canonicalTriviaSlug(
+                  rawCat ?? (targetCategories.isNotEmpty ? targetCategories.first : 'general'),
+                );
                 final itemDiff = item['difficulty'] as String? ?? 'medium';
 
                 if (prompt != null &&
@@ -1362,25 +2063,52 @@ class GameContentService {
                 }
               }
             }
-          } catch (_) {}
+          } catch (e) {
+            if (e is AiCancelledException) rethrow;
+            if (e is AiNoInternetException) {
+              lastAiError = 'لا يوجد اتصال بالإنترنت لتجهيز أسئلة جديدة في قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+            } else if (e is AiRateLimitException) {
+              lastAiError = 'تم تجاوز حد الاستخدام المتاح للذكاء الاصطناعي مؤقتاً';
+            } else if (e is AiTimeoutException) {
+              lastAiError = 'انتهت مهلة الاتصال بالخادم أثناء تجهيز أسئلة قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+            } else if (e is AiServiceException || e is AiInvalidKeyException) {
+              lastAiError = 'حدث خطأ من الخادم أثناء توليد أسئلة قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+            } else if (e is DioException) {
+              if (e.type == DioExceptionType.cancel) throw const AiCancelledException();
+              if (e.type == DioExceptionType.connectionTimeout ||
+                  e.type == DioExceptionType.receiveTimeout ||
+                  e.type == DioExceptionType.sendTimeout) {
+                lastAiError = 'انتهت مهلة الاتصال بالخادم أثناء تجهيز أسئلة قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+              } else if (e.type == DioExceptionType.connectionError) {
+                lastAiError = 'لا يوجد اتصال بالإنترنت لتجهيز أسئلة جديدة في قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+              } else if (e.response?.statusCode == 429) {
+                lastAiError = 'تم تجاوز حد الاستخدام المتاح للذكاء الاصطناعي مؤقتاً';
+              } else {
+                lastAiError = 'حدث خطأ من الخادم أثناء توليد أسئلة قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+              }
+            } else if (e is TimeoutException) {
+              lastAiError = 'انتهت مهلة تجهيز الأسئلة في قسم ${CategoryLocalization.getTriviaCategoriesLabel(targetCategories)}';
+            }
+          }
 
           for (final q in aiQuestions) {
             if (isAllowed(q, result)) {
               if (result.length < count) {
                 result.add(q);
+                onProgress?.call(result.length, count);
               } else {
                 _triviaBuffer.add(q);
               }
             }
           }
-        } catch (_) {
+        } catch (e) {
+          if (e is AiCancelledException) rethrow;
           break; // في حالة انقطاع الإنترنت أو الخطأ، التحول فوراً للمصادر المحلية
         }
       }
     }
 
     if (result.length >= count) {
-      await _recordSeenTrivia(result);
       return result.take(count).toList();
     }
 
@@ -1392,61 +2120,22 @@ class GameContentService {
 
     for (final q in matchingUnseen) {
       result.add(q);
+      onProgress?.call(result.length, count);
       if (result.length >= count) break;
     }
 
     if (result.length >= count) {
-      await _recordSeenTrivia(result);
       return result.take(count).toList();
     }
 
-    // إذا تم تعطيل الـ AI بشكل صريح وكان البنك المحلي غير كافٍ للقسم والصعوبة
-    if (result.length < count && !allowAi) {
-      final categoryLabel = targetCategories.isNotEmpty ? targetCategories.join(' و ') : 'المختارة';
-      throw InsufficientTriviaQuestionsException(
-        category: categoryLabel,
-        available: result.length,
-        requiredCount: count,
-      );
-    }
-
     // 5. في حالة نفاد الأسئلة غير المعروضة بالكامل:
-    // نستخدم الأقدم مشاهدة كحل أخير (FIFO Recycle) مع وضع تلميح للمضيف دون توقف أو رسالة خطأ
-    hasRecycledTrivia = true;
-    lastHintMessage = 'اتصل بالإنترنت لمحتوى جديد';
-
-    final seenPromptList = localSeenPrompts.toList();
-    final promptIndexMap = <String, int>{};
-    for (var i = 0; i < seenPromptList.length; i++) {
-      promptIndexMap[seenPromptList[i]] = i;
-    }
-
-    final matchingAll = candidates.where((q) {
-      return matchesCategory(q.categorySlug) &&
-          matchesDifficulty(q.difficulty) &&
-          !result.any((r) => r.id == q.id);
-    }).toList();
-
-    final candidateRanks = <QuestionModel, int>{};
-    for (final q in matchingAll) {
-      final h = ArabicTextNormalizer.triviaQuestionHash(q.promptAr);
-      candidateRanks[q] = promptIndexMap[h] ?? -1;
-    }
-    matchingAll.sort((a, b) => candidateRanks[a]!.compareTo(candidateRanks[b]!));
-
-    for (final q in matchingAll) {
-      result.add(q);
-      if (result.length >= count) break;
-    }
-
-    // ضمان نهائي بعدم رجوع قائمة فارغة إطلاقاً
-    if (result.isEmpty && candidates.isNotEmpty) {
-      final forced = List<QuestionModel>.from(candidates)..shuffle(Random());
-      result.addAll(forced.take(count));
-    }
-
-    await _recordSeenTrivia(result);
-    return result;
+    final categoryLabel = CategoryLocalization.getTriviaCategoriesLabel(targetCategories);
+    throw InsufficientTriviaQuestionsException(
+      category: categoryLabel,
+      available: result.length,
+      requiredCount: count,
+      failureReason: lastAiError,
+    );
   }
 
   /// إرجاع أسئلة فورية من البنك المحلي بدون انتظار الـ AI مع تفعيل تنبيه استهلاك البنك
@@ -1467,7 +2156,7 @@ class GameContentService {
       return diff == difficulty;
     }
     final pool = kFallbackTriviaQuestions.where((q) => matchesCategory(q.categorySlug) && matchesDifficulty(q.difficulty)).toList();
-    if (pool.length < count) {
+    if (pool.length < count && targetCategories.isEmpty) {
       pool.addAll(kFallbackTriviaQuestions.where((q) => !pool.contains(q)));
     }
     pool.shuffle(Random());
@@ -1527,20 +2216,6 @@ class GameContentService {
     });
   }
 
-  Future<void> _recordSeenTrivia(List<QuestionModel> questions) async {
-    final promptHashes = questions.map((q) => ArabicTextNormalizer.triviaQuestionHash(q.promptAr)).toList();
-    final answerHashes = questions.map((q) => _safeAnswerHash(q)).toList();
-    final prompts = questions.map((q) => q.promptAr).toList();
-    final ids = questions.where((q) => q.id > 0).map((q) => q.id).toList();
-
-    await _storage.markTriviaHashesSeen(promptHashes: promptHashes, answerHashes: answerHashes);
-    await _storage.markTriviaQuestionTextsSeen(prompts);
-    if (ids.isNotEmpty) {
-      await _storage.markQuestionsSeen(ids);
-      await _api.markQuestionsSeen(ids);
-    }
-  }
-
   // ==========================================
   // 3. مثّل ومتتكلمش (CHARADES GAME)
   // ==========================================
@@ -1590,6 +2265,9 @@ class GameContentService {
     final tokens = trimmed.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
     if (tokens.isEmpty || tokens.length > 4) return false;
 
+    // استبعاد الأرقام (أرقام عربية أو لاتينية) منعاً للمفاهيم والمصطلحات الرقمية
+    if (RegExp(r'[0-9\u0660-\u0669]').hasMatch(trimmed)) return false;
+
     final norm = ArabicTextNormalizer.normalize(trimmed);
     final normTokens = tokens.map((t) => ArabicTextNormalizer.normalize(t)).toList();
 
@@ -1603,6 +2281,9 @@ class GameContentService {
       'التضخم الاقتصادي',
       'تغير مناخي',
       'التغير المناخي',
+      'حبل مشنقه',
+      'حبل المشنقه',
+      'ابن القاضي شنق نفسه',
     ];
 
     for (final bad in multiWordBanned) {
@@ -1612,7 +2293,7 @@ class GameContentService {
       }
     }
 
-    // استبعاد المفاهيم المجردة والسياسية والتقنية الصعبة
+    // استبعاد المفاهيم المجردة والسياسية والتقنية والمحتوى المسيء
     const singleWordBanned = [
       'ديمقراطيه',
       'اقتصاد',
@@ -1630,6 +2311,21 @@ class GameContentService {
       'نسبيه',
       'ميثولوجي',
       'جيوسياسي',
+      'جيجا',
+      'ميجا',
+      'تيرابايت',
+      'سيرفر',
+      'خوارزميه',
+      'هاكر',
+      'سوفتوير',
+      'هاردوير',
+      'مشنقه',
+      'شنق',
+      'انتحار',
+      'صبر',
+      'تاني',
+      'ضمير',
+      'خلود',
     ];
 
     for (final token in normTokens) {
@@ -1645,14 +2341,26 @@ class GameContentService {
     return true;
   }
 
-  /// جلب مجموعة كلمات قابلة للتمثيل بدون تكرار، مع ضمان عدم نفاد الكلمات إطلاقاً
   Future<List<String>> getCharadesWords({
     required int count,
     String? category,
     BootstrapData? bootstrapData,
     Set<String>? externalSeenHashes,
+    String? roomCode,
+    void Function(int current, int target)? onProgress,
+    CancelToken? cancelToken,
   }) async {
     final cat = normalizeCharadesCategory(category);
+
+    // 0. التحقق من التجهيز المسبق المحجوز للغرفة
+    if (roomCode != null && roomCode.isNotEmpty) {
+      final prebuffered = consumePrebufferedCharades(roomCode, count: count);
+      if (prebuffered != null && prebuffered.length >= count) {
+        unawaited(prebufferNextCharadesGame(roomCode: roomCode, count: count, category: cat, externalSeenHashes: externalSeenHashes));
+        return prebuffered;
+      }
+    }
+
     final localSeen = _storage.getSeenCharadesHashes();
     final allSeen = {...localSeen, ...?externalSeenHashes};
 
@@ -1675,24 +2383,23 @@ class GameContentService {
       final h = ArabicTextNormalizer.wordHash(candidate);
       if (isActableCharadesWord(candidate) && !allSeen.contains(h) && !result.contains(candidate)) {
         result.add(candidate);
+        onProgress?.call(result.length, count);
       }
     }
 
     if (result.length >= count) {
-      final hashes = result.map((w) => ArabicTextNormalizer.wordHash(w)).toList();
-      await _storage.markCharadesHashesSeen(hashes);
-      await _storage.markCharadesWordsSeen(result);
       return result;
     }
 
-    // 4. توليد بالذكاء الاصطناعي عبر Backend Proxy لو لسه العدد ناقص مع مهلة 4 ثوانٍ
+    // 4. توليد بالذكاء الاصطناعي عبر Backend Proxy لو لسه العدد ناقص مع مهلة 22 ثانية
     try {
       final rawItems = await _api.generateAiContent(
         gameType: 'charades',
         category: cat,
         count: (count - result.length) + 10,
         excludeItems: localSeen.take(30).toList(),
-      ).timeout(const Duration(seconds: 4));
+        cancelToken: cancelToken,
+      ).timeout(const Duration(seconds: 22));
 
       final aiWords = rawItems
           .map((item) => (item['word_ar'] ?? item['word'] ?? item['prompt_ar'] ?? '').toString())
@@ -1708,12 +2415,14 @@ class GameContentService {
             !_charadesBuffer.contains(trimmed)) {
           if (result.length < count) {
             result.add(trimmed);
+            onProgress?.call(result.length, count);
           } else {
             _charadesBuffer.add(trimmed);
           }
         }
       }
-    } catch (_) {
+    } catch (e) {
+      if (e is AiCancelledException) rethrow;
       // لو فشل الـ AI أو بدون إنترنت، نواصل فوراً للمصادر المحلية بدون توقف
     }
 
@@ -1732,49 +2441,38 @@ class GameContentService {
       }
     }
 
-    // 6. تفضيل الأقدم مشاهدة عند استنزاف الكلمات (FIFO Recycle) مع تلميح للمضيف
-    if (result.length < count) {
-      hasRecycledCharades = true;
-      lastHintMessage = 'اتصل بالإنترنت لمحتوى جديد';
-
-      final seenList = localSeen.toList();
-      final seenIndexMap = <String, int>{};
-      for (var i = 0; i < seenList.length; i++) {
-        seenIndexMap[seenList[i]] = i;
-      }
-
-      final seenPool = fallbackPool.where((w) => !result.contains(w)).toList();
-      final wordRanks = <String, int>{};
-      for (final w in seenPool) {
-        wordRanks[w] = seenIndexMap[ArabicTextNormalizer.wordHash(w)] ?? -1;
-      }
-      seenPool.sort((a, b) => wordRanks[a]!.compareTo(wordRanks[b]!));
-
-      for (final w in seenPool) {
-        result.add(w);
-        if (result.length >= count) break;
-      }
-    }
-
-    // إذا كان المطلوب كبيراً جداً، ندمج من البنك الشامل
-    if (result.length < count) {
-      final allPool = CharadesWordsBank.mixed.where((w) => !result.contains(w)).toList()..shuffle(Random());
+    // إذا كان المطلوب كبيراً جداً، ندمج من البنك الشامل الكلمات غير المشاهدة فقط إذا كانت الفئة مختلطة mixed
+    if (result.length < count && cat == 'mixed') {
+      final allPool = CharadesWordsBank.mixed.where((w) {
+        final h = ArabicTextNormalizer.wordHash(w);
+        return !allSeen.contains(h) && !result.contains(w);
+      }).toList()..shuffle(Random());
       for (final w in allPool) {
         result.add(w);
         if (result.length >= count) break;
       }
     }
 
-    // ضمان نهائي بعدم إرجاع قائمة فارغة
-    if (result.isEmpty && fallbackPool.isNotEmpty) {
-      final forced = List<String>.from(fallbackPool)..shuffle(Random());
-      result.addAll(forced.take(count));
+    // إذا استُهلكت جميع الكلمات غير المشاهدة محلياً للقسم،
+    // نملأ النقص بإعادة تدوير كلمات نفس القسم فقط
+    if (result.length < count) {
+      final fallbackPool = _getFallbackCharadesWords(cat, bootstrapData)..shuffle(Random());
+      for (final w in fallbackPool) {
+        if (!result.contains(w) && isActableCharadesWord(w)) {
+          result.add(w);
+          if (result.length >= count) break;
+        }
+      }
     }
 
-    if (result.isNotEmpty) {
-      final hashes = result.map((w) => ArabicTextNormalizer.wordHash(w)).toList();
-      await _storage.markCharadesHashesSeen(hashes);
-      await _storage.markCharadesWordsSeen(result);
+    if (result.length < count && cat == 'mixed') {
+      final mixedPool = CharadesWordsBank.mixed..shuffle(Random());
+      for (final w in mixedPool) {
+        if (!result.contains(w) && isActableCharadesWord(w)) {
+          result.add(w);
+          if (result.length >= count) break;
+        }
+      }
     }
 
     return result;
@@ -1835,8 +2533,8 @@ class GameContentService {
       list.addAll(CharadesWordsBank.getWordsForCategory(cat));
     }
 
-    // 3. ضمان نهائي بعدم إرجاع قائمة فارغة
-    if (list.isEmpty) {
+    // 3. ضمان نهائي بعدم إرجاع قائمة فارغة فقط إذا كانت الفئة مختلطة mixed
+    if (list.isEmpty && cat == 'mixed') {
       list.addAll(CharadesWordsBank.mixed);
     }
 

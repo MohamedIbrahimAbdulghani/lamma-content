@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/primary_button.dart';
+import '../../core/widgets/game_back_handler.dart';
 import '../../data/models/player_model.dart';
 import '../../data/providers/game_providers.dart';
 
@@ -29,15 +30,13 @@ class _SpyVotingScreenState extends ConsumerState<SpyVotingScreen> {
             PlayerModel(id: '4', name: 'نور', avatar: '🐼'),
           ];
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_forward, color: Colors.white),
-          onPressed: () => context.pop(),
-        ),
+    return GameBackScope(
+      child: Scaffold(
+        backgroundColor: AppTheme.bg,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: const GameBackButton(),
         title: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -169,6 +168,7 @@ class _SpyVotingScreenState extends ConsumerState<SpyVotingScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 }
